@@ -63,9 +63,9 @@ export default function Landing({ onEnter }: LandingProps) {
         <div className="pointer-events-none absolute -left-40 top-96 -z-10 size-[24rem] rounded-full bg-sky-200/40 blur-3xl" />
 
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8 sm:py-7">
-          <a href="/" className="flex items-center gap-3" aria-label="Ávila CRM, início">
+          <a href="/" className="flex items-center gap-3" aria-label="CRM, início">
             <AvilaMark />
-            <span><span className="block text-sm font-bold tracking-[0.16em] text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Avila Ops</span></span>
+            <span><span className="block text-sm font-bold tracking-[0.16em] text-slate-900">CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Avila Ops</span></span>
           </a>
           {authUrl && <div className="flex items-center gap-4"><a className="text-sm font-semibold text-slate-700 hover:text-slate-950" href={authUrl}>Entrar</a>{signupUrl && <a className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:border-slate-500" href={signupUrl}>Criar minha conta</a>}</div>}
         </nav>

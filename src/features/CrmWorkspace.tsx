@@ -31,7 +31,7 @@ function CrmWorkspace({ route, navigate, children }: CrmWorkspaceProps) {
   )
   const navigation = useMemo(() => ({ route, navigate }), [route, navigate])
 
-  if (checking) return <main className="grid min-h-dvh place-items-center" role="status">Carregando o CRM…</main>
+  if (checking && route.page !== 'home') return <main className="grid min-h-dvh place-items-center" role="status">Carregando o CRM…</main>
 
   if (!session) {
     return <PublicMdxPage path="/" onEnter={setUser} />

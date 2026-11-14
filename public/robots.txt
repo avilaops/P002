@@ -1,5 +1,7 @@
-# Área interna (CRM) — não deve aparecer em buscadores.
-# O noindex fica na meta tag do index.html; aqui não usamos Disallow
-# porque bloquear o rastreio impediria o Google de ver o próprio noindex.
+# Apresentação e documentação públicas do Avila CRM.
+# Rotas autenticadas recebem noindex nos próprios layouts.
+# Permitir o rastreio deixa os buscadores lerem essas diretivas.
 User-agent: *
 Allow: /
+
+Sitemap: https://crm.avilaops.com/sitemap.xml

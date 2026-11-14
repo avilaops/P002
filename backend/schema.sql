@@ -821,3 +821,72 @@ create index if not exists contact_imports_tenant_idx on contact_imports(tenant_
 alter table contacts add column if not exists import_id uuid references contact_imports(id) on delete set null;
 alter table contacts add column if not exists legal_basis text;
 create index if not exists contacts_import_idx on contacts(tenant_id, import_id) where import_id is not null;
+
+-- Reuniões: mídia no LiveKit, histórico e fila durável no CRM.
+create table if not exists lead_meetings (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  lead_id uuid not null references leads(id) on delete cascade,
+  contact_id uuid references contacts(id) on delete set null,
+  created_by uuid references users(id) on delete set null,
+  room_name text not null unique,
+  invite_hash text not null,
+  invite_expires_at timestamptz not null,
+  status text not null default 'scheduled' check(status in ('scheduled','active','ended')),
+  started_at timestamptz,
+  ended_at timestamptz,
+  host_consent_at timestamptz,
+  guest_consent_at timestamptz,
+  guest_name text,
+  capture_incomplete boolean not null default false,
+  analysis_status text not null default 'idle' check(analysis_status in ('idle','queued','processing','complete','failed')),
+  analysis_started_at timestamptz,
+  assessment jsonb,
+  analysis_error text,
+  model text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists lead_meetings_lead_idx on lead_meetings(tenant_id,lead_id,created_at desc);
+create index if not exists lead_meetings_analysis_idx on lead_meetings(analysis_status) where analysis_status in ('queued','processing');
+drop trigger if exists crm_tenant_meetings_lead on lead_meetings;
+create trigger crm_tenant_meetings_lead before insert or update on lead_meetings for each row execute function crm_check_tenant_link('lead_id','leads');
+drop trigger if exists crm_tenant_meetings_contact on lead_meetings;
+create trigger crm_tenant_meetings_contact before insert or update on lead_meetings for each row execute function crm_check_tenant_link('contact_id','contacts');
+drop trigger if exists crm_tenant_meetings_creator on lead_meetings;
+create trigger crm_tenant_meetings_creator before insert or update on lead_meetings for each row execute function crm_check_tenant_link('created_by','users');
+
+create table if not exists meeting_audio_chunks (
+  id uuid primary key,
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  meeting_id uuid not null references lead_meetings(id) on delete cascade,
+  speaker text not null check(speaker in ('host','guest')),
+  start_ms integer not null check(start_ms between 0 and 7200000),
+  duration_ms integer not null check(duration_ms between 1 and 25000),
+  mime_type text not null,
+  audio bytea,
+  text text,
+  status text not null default 'queued' check(status in ('queued','processing','done','failed')),
+  error text,
+  processing_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists meeting_audio_queue_idx on meeting_audio_chunks(status,created_at) where status in ('queued','processing');
+create index if not exists meeting_audio_meeting_idx on meeting_audio_chunks(tenant_id,meeting_id,start_ms);
+drop trigger if exists crm_tenant_audio_meeting on meeting_audio_chunks;
+create trigger crm_tenant_audio_meeting before insert or update on meeting_audio_chunks for each row execute function crm_check_tenant_link('meeting_id','lead_meetings');
+
+create table if not exists meeting_reviews (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  meeting_id uuid not null references lead_meetings(id) on delete cascade,
+  user_id uuid references users(id) on delete set null,
+  verdict text not null check(verdict in ('qualified','disqualified','insufficient_data')),
+  note text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists meeting_reviews_meeting_idx on meeting_reviews(tenant_id,meeting_id,created_at desc);
+drop trigger if exists crm_tenant_review_meeting on meeting_reviews;
+create trigger crm_tenant_review_meeting before insert or update on meeting_reviews for each row execute function crm_check_tenant_link('meeting_id','lead_meetings');
+drop trigger if exists crm_tenant_review_user on meeting_reviews;
+create trigger crm_tenant_review_user before insert or update on meeting_reviews for each row execute function crm_check_tenant_link('user_id','users');

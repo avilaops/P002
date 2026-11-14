@@ -24,6 +24,8 @@ import { registerMailRoutes } from "./routes-mail.js";
 import { registerImportRoutes } from "./routes-import.js";
 import { startAutomation } from "./automation.js";
 import { registerAiRoutes } from "./routes-ai.js";
+import { registerCopilotRoutes } from "./copilot.js";
+import { registerMeetingRoutes } from "./meetings.js";
 import { registerProductRoutes } from "./routes-products.js";
 import { registerAutomationRoutes } from "./routes-automations.js";
 import { registerSegmentRoutes } from "./routes-segments.js";
@@ -886,7 +888,9 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     reply.raw.setHeader("X-Content-Type-Options", "nosniff");
     reply.raw.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     reply.raw.setHeader("X-Frame-Options", "DENY");
-    reply.raw.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    reply.raw.setHeader("Permissions-Policy", request.url.startsWith('/meet/')
+      ? "camera=(self), microphone=(self), display-capture=(self), geolocation=()"
+      : "camera=(), microphone=(), geolocation=()");
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
@@ -2455,6 +2459,8 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
 
   registerMailRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });
   registerAiRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });
+  registerCopilotRoutes(app, { requireAuth, decryptSecret });
+  registerMeetingRoutes(app, { requireAuth, decryptSecret, background: options.background !== false });
   registerProductRoutes(app, { requireAuth, recordEvent });
   registerAutomationRoutes(app, { requireAuth, recordEvent });
   registerSegmentRoutes(app, { requireAuth, recordEvent });

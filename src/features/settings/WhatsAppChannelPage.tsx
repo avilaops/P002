@@ -69,7 +69,7 @@ export function WhatsAppChannelPage() {
             coluna da direita e acompanha a rolagem. */}
         <div className="grid gap-5 @3xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] @3xl:items-start">
           <div className="grid min-w-0 gap-5 @3xl:col-start-1 @3xl:row-start-1">
-            <EvolutionCard />
+            <EvolutionCard canManage={canManage} />
             <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">Conexão oficial e configurações alternativas</summary><div className="mt-4 grid gap-4">
             {loading ? (
               <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Consultando a conexão…</section>

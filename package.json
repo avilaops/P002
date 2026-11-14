@@ -47,12 +47,15 @@
     "cli:publish": "node scripts/publish-cli.mjs",
     "cli:release": "node scripts/release-cli.mjs",
     "test:backend": "tsc -p tsconfig.server.json && node --test backend/test/*.test.mjs",
-    "test:web": "tsx --tsconfig tsconfig.app.json --test test/web/*.test.ts"
+    "test:web": "tsx --tsconfig tsconfig.app.json --test test/web/*.test.ts",
+    "test:seo": "node --test scripts/verify-public-seo.mjs"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.1",
     "@langfuse/otel": "6.1.0",
     "@langfuse/tracing": "6.1.0",
+    "@livekit/components-react": "2.9.25",
+    "@livekit/components-styles": "1.2.0",
     "@mdx-js/loader": "^3.1.1",
     "@mdx-js/react": "^3.1.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -71,6 +74,8 @@
     "dotenv": "^17.4.2",
     "fastify": "^5.11.3",
     "imapflow": "^1.7.6",
+    "livekit-client": "2.24.0",
+    "livekit-server-sdk": "2.19.3",
     "lucide-react": "^1.26.0",
     "motion": "^14.10.1",
     "next": "^16.4.5",

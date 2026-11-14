@@ -66,14 +66,14 @@ function SidebarNavigation() {
   const current = sectionOf(route.page)
   const [expanded, setExpanded] = useState<string | null>(current?.id ?? null)
   const inSettings = isSettingsPage(route.page)
-  const { whatsapp, email } = supportLinks('Olá! Preciso de ajuda com o Ávila CRM.')
+  const { whatsapp, email } = supportLinks('Olá! Preciso de ajuda com o CRM.')
   const help = whatsapp ?? email
   const go = (page: Parameters<typeof navigate>[0]) => { navigate(page); setOpenMobile(false) }
 
   return <>
     <AnimatedSidebarHeader>
       <AvilaMark className="size-8 shrink-0" />
-      {!collapsed && <span className="min-w-0 whitespace-nowrap"><span className="block text-sm font-bold tracking-tight text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-widest text-slate-400">AVILA OPS</span></span>}
+      {!collapsed && <span className="min-w-0 whitespace-nowrap"><span className="block text-sm font-bold tracking-tight text-slate-900">CRM</span><span className="block text-[10px] font-medium tracking-widest text-slate-400">AVILA OPS</span></span>}
       <AnimatedSidebarClose className="ml-auto medium:hidden" />
     </AnimatedSidebarHeader>
     <AnimatedSidebarContent>

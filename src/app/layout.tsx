@@ -2,22 +2,22 @@ import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import { SessionStateProvider } from '../components/crm/SessionState'
 import { AnimatedSidebarProvider } from '../components/ui/animated-sidebar'
+import { publicPageMetadata, siteUrl } from '../lib/seo'
 import '../index.css'
 
 export const metadata: Metadata = {
-  title: 'Avila CRM | Avila Ops',
-  description: 'Conversas, oportunidades e clientes em um espaço de trabalho da Ávila Ops.',
-  icons: { icon: '/avila-crm-symbol.svg' },
-  manifest: '/site.webmanifest',
-  robots: { index: false, follow: false },
-  openGraph: {
-    title: 'Avila CRM | Avila Ops',
-    siteName: 'Avila Ops',
-    locale: 'pt_BR',
-    type: 'website',
-    images: [{ url: 'https://crm.avilaops.com/og-default.png', width: 1200, height: 630 }],
+  ...publicPageMetadata('/'),
+  metadataBase: new URL(siteUrl),
+  title: { default: 'CRM com IA para vendas e atendimento • Avila Ops', template: '%s • Avila CRM' },
+  applicationName: 'Avila CRM',
+  icons: {
+    icon: [
+      { url: '/favicon.png', type: 'image/png', sizes: '96x96' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
   },
-  twitter: { card: 'summary_large_image', images: ['https://crm.avilaops.com/og-default.png'] },
+  manifest: '/site.webmanifest',
 }
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover', themeColor: '#0b0d10' }

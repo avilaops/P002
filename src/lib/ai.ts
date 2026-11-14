@@ -1,4 +1,14 @@
 import { api } from './crm'
+import { recentCopilotMessages, type CopilotMessage, type CopilotSource } from './copilot'
+
+export function sendCopilotMessage(messages: CopilotMessage[], signal?: AbortSignal) {
+  return api<{ message: CopilotMessage; sources: CopilotSource[] }>('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: recentCopilotMessages(messages) }),
+    signal,
+  })
+}
 
 export type AiConfig = {
   provider: 'openai' | 'anthropic' | 'qwen' | 'deepseek' | 'groq' | string

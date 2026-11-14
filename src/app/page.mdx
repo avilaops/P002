@@ -1,4 +1,10 @@
 import { CrmPage, HomeScreen } from '../components/crm/screens'
+import PublicSeo from '../components/public/PublicSeo'
+import { publicPageMetadata } from '../lib/seo'
+
+export const metadata = publicPageMetadata('/')
+
+<PublicSeo path="/" />
 
 <CrmPage page="home">
   <HomeScreen />

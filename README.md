@@ -74,6 +74,32 @@ Todas as telas possuem um `page.mdx` em `src/app`, incluindo uma rota dinâmica 
 
 As páginas públicas editáveis ficam em `src/content/public`. Credenciais de banco e OIDC permanecem no `.env.local`, ignorado pelo Git. Para consultar produção por túnel SSH, mantenha `AUTOMATION_DISABLED=true` no ambiente local e não execute migrações contra o banco de produção.
 
+## Copiloto com IA local
+
+O painel lateral conversa pela rota autenticada `POST /api/ai/chat`. Ele usa o provedor configurado para a empresa, mantém o histórico recente na interface e consulta fontes de conhecimento ativas que correspondam à pergunta. O modelo recebe apenas esse contexto e não executa alterações no CRM. O uso aparece em `ai_runs`, sem armazenar o texto da conversa nesse registro.
+
+Para um Windows com pouca memória, use Ollama e `qwen3:0.6b`. O CLI standalone oficial pode ficar em `%LOCALAPPDATA%/Programs/Ollama`; a instalação e os modelos ficam fora do repositório. Inicie o serviço em um terminal:
+
+```powershell
+$env:OLLAMA_HOST='127.0.0.1:11434'
+$env:OLLAMA_CONTEXT_LENGTH='4096'
+$env:OLLAMA_NUM_PARALLEL='1'
+$env:OLLAMA_MAX_LOADED_MODELS='1'
+$env:OLLAMA_KEEP_ALIVE='2m'
+$env:OLLAMA_NO_CLOUD='1'
+& "$env:LOCALAPPDATA/Programs/Ollama/ollama.exe" serve
+```
+
+Em outro terminal, baixe o modelo uma vez:
+
+```powershell
+& "$env:LOCALAPPDATA/Programs/Ollama/ollama.exe" pull qwen3:0.6b
+```
+
+Na tela **Assistente de IA** (`/ai-agent/`), selecione **Qwen local** e informe o modelo `qwen3:0.6b`. O endpoint padrão é `http://127.0.0.1:11434/v1`, ajustável por `QWEN_BASE_URL` no backend; a chave é opcional para o Ollama local. Após o download, a inferência desse modelo funciona localmente. O Ollama precisa estar iniciado ao usar o chat.
+
+O chat aceita perguntas de até 2.000 caracteres, envia até 12 mensagens recentes e limita o histórico enviado a 6.000 caracteres. **Cancelar resposta** preserva a pergunta para tentar novamente; **Novo chat** limpa a conversa, e recolher o painel preserva seu conteúdo. Atualizar a página limpa o histórico. Respostas podem levar até 90 segundos; o proxy de desenvolvimento aguarda esse prazo.
+
 ## Validação
 
 ```powershell
@@ -188,6 +214,10 @@ mensagem. O recebimento continua pela Messageria.
 O OAuth que o CRM fazia sozinho (`credentials`, `login-url`, `exchange`,
 `sync-channels`, com `SETUP_TOKEN`) foi aposentado em 08/10/2026: essas rotas
 respondem 410.
+
+## Videochamadas e qualificação de leads
+
+O painel da oportunidade permite criar uma sala de duas pessoas, gerar convite e acompanhar transcrição, resumo e avaliação comercial por IA. A implantação local usa LiveKit, Faster Whisper e Ollama, com histórico no PostgreSQL do CRM. Consulte [uso, configuração e limites em docs/MEETINGS.md](docs/MEETINGS.md).
 
 ## Backlog de produto
 

@@ -1,4 +1,5 @@
 import LeadActivity from '../LeadActivity'
+import LeadMeetings from '../meetings/LeadMeetings'
 import { useState } from 'react'
 import {
   CheckCircle2,
@@ -266,6 +267,7 @@ export default function LeadDetailDrawer({
             )}
           </div>
 
+          <LeadMeetings key={`meetings-${lead.id}`} leadId={lead.id} />
           <LeadActivity key={lead.id} id={lead.id} onUpdated={updated=>{setLead(old=>({...old,...updated}));onUpdated(updated)}} />
           {/* Contato Vinculado */}
           <div className="rounded-lg border border-slate-200 bg-white p-4">

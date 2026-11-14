@@ -51,9 +51,155 @@
         "scripts/telas/next-smoke.mjs"
       ],
       "ambiente": "local; sem publicação desta migração"
+    },
+    {
+      "id": "COPILOT-LOCAL-001",
+      "title": "Conectar o Copiloto ao Qwen local",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Conversar com Qwen3 0.6B no painel lateral usando Ollama no computador e fontes de conhecimento da própria empresa.",
+      "criteriosAceite": [
+        "Ollama em loopback com Qwen3 0.6B e inferência local real",
+        "Chat autenticado, histórico recente, isolamento por empresa e fontes ativas",
+        "Cancelamento, novo chat, erros visíveis e deadline de 90 segundos",
+        "Revisão independente, tipos, testes, lint, build e navegador verificados"
+      ],
+      "evidencias": [
+        "backend/test/copilot.test.mjs",
+        "test/web/copilot.test.ts",
+        "docs/superpowers/plans/2026-11-13-copilot-local.md",
+        "output/copilot-local-results.json"
+      ],
+      "ambiente": "local; Ollama 0.40.16, qwen3:0.6b, PostgreSQL local"
+    },
+    {
+      "id": "EVOLUTION-LOCAL-001",
+      "title": "Instalar Evolution API com PostgreSQL local",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Disponibilizar a Evolution API nesta máquina usando banco próprio no PostgreSQL local e preparar o pareamento do WhatsApp pelo CRM.",
+      "criteriosAceite": [
+        "Evolution API 2.3.7 executando em loopback na porta 15434",
+        "Banco evolution_local com migrações aplicadas e usuário próprio",
+        "Autenticação por chave local e integração do CRM verificadas",
+        "QR real gerado; leitura no celular permanece uma ação do proprietário"
+      ],
+      "evidencias": [
+        "docs/EVOLUTION.md",
+        "output/evolution-local-result.json",
+        "HTTP 401 sem chave e HTTP 200 autenticado na Evolution",
+        "HTTP 200 em status e connect do CRM com QR real"
+      ],
+      "ambiente": "Windows local; PostgreSQL 127.0.0.1:5432; evolution_local; cache em memória"
+    },
+    {
+      "id": "WHATSAPP-UX-001",
+      "title": "Melhorar o pareamento do WhatsApp no CRM",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Orientar o pareamento pelo próprio CRM com QR atualizado, confirmação automática, recuperação de falhas e layout para celular.",
+      "criteriosAceite": [
+        "Estados claros, instruções no celular e atualização automática do QR",
+        "Consultas serializadas, pausa em página oculta, cancelamento e limite de espera",
+        "Permissões existentes preservadas; Nicolas permanece atendente",
+        "Revisão independente, tipos, lint, testes, build e navegador verificados"
+      ],
+      "evidencias": [
+        "docs/superpowers/plans/2026-11-14-whatsapp-pairing-experience.md",
+        "test/web/evolutionPairing.test.ts",
+        "test/web/evolutionRequest.test.ts",
+        "output/whatsapp-ux-results.json"
+      ],
+      "ambiente": "local; estados de interface verificados com respostas controladas; pareamento real ainda pendente"
+    },
+    {
+      "id": "MEETINGS-LOCAL-001",
+      "title": "Videochamadas e qualificação de leads por IA",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Conduzir reuniões no CRM, transcrever áudio localmente e registrar avaliação fundamentada e revisável no lead.",
+      "criteriosAceite": [
+        "Nicolas atendente cria reunião e convidado entra com aceite e convite restrito",
+        "LiveKit e Whisper locais; transcrição por participante e fila PostgreSQL durável",
+        "Qwen local avalia critérios com evidências e permite revisão sem alterar o funil",
+        "Isolamento, encerramento, captura, revisão independente e verificações completas"
+      ],
+      "evidencias": [
+        "docs/MEETINGS.md",
+        "docs/superpowers/plans/2026-11-14-lead-video-meetings.md",
+        "backend/test/meeting-analysis.test.mjs",
+        "backend/test/meetings.test.mjs",
+        "test/web/meetingCapture.test.ts",
+        "output/meetings-smoke-results.json"
+      ],
+      "ambiente": "Windows local; PostgreSQL agenda_crm; LiveKit 1.13.11; Faster Whisper base; Qwen3 1.7B; sem publicação externa"
+    },
+    {
+      "id": "FAVICON-LOCAL-001",
+      "title": "Corrigir a referência principal do favicon",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Usar o símbolo colorido existente em um endereço PNG estável de 96×96, com alternativa ICO.",
+      "criteriosAceite": [
+        "Ícone principal declarado como PNG de 96×96 no cabeçalho",
+        "Alternativa ICO, Apple e manifesto acessíveis",
+        "Tipos e verificação em três páginas reais no navegador aprovados"
+      ],
+      "evidencias": [
+        "public/favicon.png",
+        "src/app/layout.tsx",
+        "output/favicon-results.json"
+      ],
+      "ambiente": "local; domínio público não respondeu à verificação HTTP; publicação não realizada"
+    },
+    {
+      "id": "SEO-PUBLIC-001",
+      "title": "Preparar o CRM para descoberta pública nos buscadores",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Indexar apresentação e documentação públicas do crm.avilaops.com, com sitemap canônico e dados estruturados; preservar noindex e autenticação nos grupos internos.",
+      "criteriosAceite": [
+        "Apresentação disponível no HTML inicial, independente da consulta de sessão",
+        "Quatro páginas públicas com index, canonical e metadados próprios",
+        "Dez grupos autenticados permanecem noindex; reuniões mantêm cabeçalho próprio",
+        "Sitemap, robots e llms válidos; tipos, lint, build e verificação HTTP aprovados"
+      ],
+      "evidencias": [
+        "docs/superpowers/plans/2026-11-14-public-search.md",
+        "scripts/verify-public-seo.mjs",
+        "docs/SEO.md",
+        "output/public-seo-browser-results.json",
+        "Tipos, lint, 69 testes web, seis testes HTTP e build aprovados",
+        "Revisão estática independente sem achados"
+      ],
+      "ambiente": "Windows local; produção local verificada; servidor P002 reconectado em 14/11/2026 e API saudável; versão pública ainda com noindex e sitemap 404; implantação das correções e envio ao Search Console pendentes"
+    },
+    {
+      "id": "P002-SERVER-RECONNECT-001",
+      "title": "P002 • reconectar o frontend local ao servidor online",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Restabelecer o acesso após o retorno do servidor, usando a API online do P002 no frontend local e recuperando os links reais de autenticação.",
+      "criteriosAceite": [
+        "SSH e saúde do P002 disponíveis, com banco de produção conectado",
+        "API local encaminha sessão e configuração SSO para a origem online",
+        "Navegador exibe os botões de entrada e cadastro e encerra o carregamento"
+      ],
+      "evidencias": [
+        "docs/SEO.md",
+        "output/P002-server-reconnect-results.json",
+        "output/P002-server-reconnected.png",
+        "HTTP 200 na saúde de produção e nos três endpoints locais de sessão, SSO e saúde"
+      ],
+      "ambiente": "Frontend local na porta 5173; API https://crm.avilaops.com; SSO https://auth.avilaops.com; configurações do PostgreSQL local preservadas; sem implantação ou migração"
     }
   ],
   "decisions": [
+    {
+      "id": "SEO-PUBLIC-D01",
+      "decision": "O usuário confirmou em 14/11/2026 que o produto crm.avilaops.com deve ser encontrado nos buscadores. As páginas públicas têm indexação e canonical próprios; os dez grupos autenticados preservam noindex. Esta decisão substitui a antiga premissa de manter todo o domínio fora do índice.",
+      "evidence": "docs/superpowers/plans/2026-11-14-public-search.md"
+    },
     {
       "id": "MCP-D01",
       "decision": "MCP de serviço somente leitura, com Bearer vinculado a uma empresa; sem SQL arbitrário ou envio de mensagens.",
