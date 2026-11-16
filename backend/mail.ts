@@ -136,7 +136,7 @@ export async function recordMailError(tenantId: string, message: string | null) 
   );
 }
 
-function imapClient(account: MailAccount) {
+export function imapClient(account: MailAccount) {
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,

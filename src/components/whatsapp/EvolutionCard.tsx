@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ArrowRight, CheckCircle2, LoaderCircle, QrCode, RefreshCw, Smartphone } from 'lucide-react'
 import { ApiError } from '../../lib/crm'
 import { requestEvolution, EvolutionTimeoutError } from '../../lib/evolution'
+import { EvolutionSyncStatus } from './EvolutionSyncStatus'
 import { evolutionPairingView, nextEvolutionAction, QR_REFRESH_MS, type EvolutionAction, type EvolutionStatus } from '../../lib/evolutionPairing'
 
 export function EvolutionCard({ canManage = false }: { canManage?: boolean }) {
@@ -145,6 +146,7 @@ export function EvolutionCard({ canManage = false }: { canManage?: boolean }) {
       {view.state !== 'checking' && <button type="button" onClick={() => void run('status')} disabled={busy} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 disabled:opacity-50"><RefreshCw size={16} className={operation === 'status' ? 'animate-spin motion-reduce:animate-none' : ''} aria-hidden="true" />{operation === 'status' ? 'Verificando…' : 'Atualizar status'}</button>}
       {canManage && connected && <button type="button" onClick={() => void run('sync')} disabled={busy} className="min-h-11 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 disabled:opacity-50">{operation === 'sync' ? 'Sincronizando…' : 'Sincronizar mensagens'}</button>}
     </div>
-    <p className="border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">A sincronização deste canal inclui mensagens recentes de texto. Grupos e anexos não são importados por esta conexão.</p>
+    {connected && <EvolutionSyncStatus />}
+    <p className="border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">As mensagens disponíveis na conexão são importadas automaticamente, incluindo grupos e anexos. O histórico anterior depende do que o WhatsApp disponibiliza. Arquivos antigos podem não estar mais disponíveis para download.</p>
   </section>
 }

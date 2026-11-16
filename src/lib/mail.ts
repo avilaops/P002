@@ -179,6 +179,10 @@ export function readMailMessage(uid: number) {
   return api<{ message: MailMessage; text: string; html: string | null }>(`/api/mail/messages/${uid}`)
 }
 
+export function replyMailMessage(uid: number, text: string, requestId: string) {
+  return api<{ ok: true }>(`/api/mail/messages/${uid}/reply`, json({ text, requestId }))
+}
+
 export function listMailSenders(status: 'new' | 'registered' | 'ignored' | 'todos' = 'new') {
   return api<{ senders: MailSender[] }>(`/api/mail/senders?status=${status}`)
 }

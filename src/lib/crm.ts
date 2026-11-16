@@ -20,6 +20,7 @@ export type CrmConversation = {
 }
 
 export type CrmMessage = {
+  historyImport?: boolean
   id: string
   conversation_id: string
   direction: 'inbound' | 'outbound' | string

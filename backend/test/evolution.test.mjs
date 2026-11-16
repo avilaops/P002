@@ -93,7 +93,7 @@ test('pareamento usa exclusivamente QR retornado pela API e não desconecta inst
   assert.equal((await pairing.connect()).qrCode, qr)
 })
 
-test('sincronização limita a instância, isola tenant e ignora duplicatas, grupos e mídia sem texto', async () => {
+test('sincronização limita a instância, isola tenant, ignora duplicatas e preserva mídia sem legenda', async () => {
   const app = Fastify()
   const seen = new Set()
   const writes = []
@@ -124,12 +124,12 @@ test('sincronização limita a instância, isola tenant e ignora duplicatas, gru
   })
   const first = await app.inject({ method: 'POST', url: '/api/integrations/evolution/sync' })
   assert.equal(first.statusCode, 200, first.body)
-  assert.equal(first.json().imported, 1)
+  assert.equal(first.json().imported, 2)
   assert.equal((await app.inject({ method: 'POST', url: '/api/integrations/evolution/sync' })).json().imported, 0)
-  assert.equal(writes.length, 1)
+  assert.equal(writes.length, 2)
   assert.match(updates[0], /unread_count/)
   assert.match(updates[0], /waiting/)
-  assert.equal(events.filter((event) => event.type === 'conversation.updated').length, 1)
+  assert.equal(events.filter((event) => event.type === 'conversation.updated').length, 2)
   assert.equal(events.find((event) => event.type === 'conversation.updated').data.unread_count, 1)
   await app.close()
 })

@@ -5,6 +5,17 @@ export type EvolutionStatus = {
   instanceName: string
   phone: string | null
   qrCode?: string | null
+  sync?: EvolutionSync
+}
+export type EvolutionSync = {
+  state: 'syncing' | 'idle' | 'error'
+  historyPage: number
+  total: number | null
+  imported: number
+  inspected: number
+  lastSuccessAt: string | null
+  error: string | null
+  historyComplete: boolean
 }
 export type EvolutionAction = 'status' | 'connect' | 'sync'
 export const QR_REFRESH_MS = 20000

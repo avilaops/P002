@@ -4,6 +4,26 @@
   "members": [],
   "tasks": [
     {
+      "id": "INBOX-20261116",
+      "title": "Sincronizar o histórico do WhatsApp e responder e-mails",
+      "status": "em-revisao",
+      "responsavel": null,
+      "objetivo": "Importar automaticamente todas as mensagens disponíveis na Evolution e permitir respostas individuais pela conta SMTP da empresa.",
+      "criteriosAceite": [
+        "Persistência da Evolution habilitada sem apagar sessões",
+        "Histórico paginado com retomada, deduplicação, grupos, LID e anexos",
+        "Andamento visível e recuperação de falhas temporárias",
+        "Respostas de e-mail limitadas à sessão e à mensagem original",
+        "Testes, revisão independente, navegador e publicação verificados"
+      ],
+      "evidencias": [
+        "backend/test/evolution-history.test.mjs",
+        "backend/test/mail-reply.test.mjs",
+        "docs/superpowers/plans/2026-11-16-inbox-sync-and-mail-replies.md"
+      ],
+      "ambiente": "Local validado com respostas controladas; persistência da Evolution verificada em produção; publicação do código em preparação"
+    },
+    {
       "id": "MCP-001",
       "title": "Disponibilizar MCP autenticado do CRM",
       "status": "em-andamento",

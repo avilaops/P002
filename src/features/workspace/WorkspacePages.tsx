@@ -1,6 +1,7 @@
 import CompanyDetails from '../../components/CompanyDetails'
 import ContactCreate from '../../components/ContactCreate'
 import InboxPresence from '../../components/InboxPresence'
+import { EvolutionSyncStatus } from '../../components/whatsapp/EvolutionSyncStatus'
 import PipelineSettings from '../../components/PipelineSettings'
 import { TaskEditor, ReminderList } from '../../components/CrmRecordTools'
 import { useEffect, useRef, useState } from 'react'
@@ -243,15 +244,16 @@ function ChatInbox({
         } else {
           // Dedupe por id: quem enviou ja inseriu a mensagem na resposta do
           // POST e recebe o mesmo evento de volta pelo SSE.
-          setMessages((items) => (items.some((item) => item.id === message.id) ? items : [...items, message]))
+          setMessages((items) => (items.some((item) => item.id === message.id) ? items : [...items, message].sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime())))
         }
-        if (message?.direction === 'inbound') {
+        if (message?.direction === 'inbound' && !message.historyImport) {
           markConversationRead(conversationId).catch(() => {})
           patchConversation(conversationId, { unread_count: 0 })
         }
       }
 
-      bumpConversation(conversationId, message)
+      if (message?.historyImport) scheduleRefresh()
+      else bumpConversation(conversationId, message)
     }
   })
 
@@ -316,7 +318,7 @@ function ChatInbox({
   const selectedAssignee = selected?.assigned_user_id ?? ''
   const windowState = describeWindow(selected, now)
   const hasOfficialChannel = hasConnectedWhatsApp(channels)
-  const viewAll = !filters.assignedUserId && !filters.unassigned
+  const viewAll = !filters.assignedUserId && !filters.unassigned && !filters.status && !filters.slaOverdue && !filters.channelId && !filters.search
 
   async function handleAssign(userId: string) {
     if (!selected) return
@@ -466,7 +468,7 @@ function ChatInbox({
               onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value, page: 1 }))}
             />
             <div className="scroll-chips -mx-3 flex gap-2 px-3" role="group" aria-label="Filtros rápidos">
-              <button type="button" className={chipClass(viewAll)} aria-pressed={viewAll} onClick={() => setFilters((current) => ({ ...current, assignedUserId: undefined, unassigned: undefined, page: 1 }))}>
+              <button type="button" className={chipClass(viewAll)} aria-pressed={viewAll} onClick={() => setFilters({ page: 1, pageSize: 30 })}>
                 Todas
               </button>
               <button type="button" className={chipClass(filters.assignedUserId === user.id)} aria-pressed={filters.assignedUserId === user.id} onClick={() => setFilters((current) => ({ ...current, assignedUserId: user.id, unassigned: undefined, page: 1 }))}>
@@ -520,6 +522,7 @@ function ChatInbox({
               </span>
             </button>
           )}
+          <EvolutionSyncStatus enabled={channels.some((channel) => channel.provider === 'evolution')} />
           {!selected && feedback}
 
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -527,9 +530,9 @@ function ChatInbox({
             {!loading && conversations.length === 0 && (
               <EmptyState
                 icon={MessageCircle}
-                title={hasOfficialChannel ? 'Nenhuma conversa por aqui' : 'Nenhuma conversa ainda'}
-                description={hasOfficialChannel ? 'Quando um cliente escrever, a conversa aparece aqui na hora.' : 'Conecte o WhatsApp para começar a receber mensagens dos seus clientes.'}
-                action={!hasOfficialChannel ? <button type="button" className={buttonClass.primary} onClick={connectChannel}>Conectar o WhatsApp</button> : undefined}
+                title={!viewAll ? 'Nenhuma conversa com estes filtros' : hasOfficialChannel ? 'Nenhuma conversa por aqui' : 'Nenhuma conversa ainda'}
+                description={!viewAll ? 'Veja todas as conversas para conferir o histórico importado.' : hasOfficialChannel ? 'As conversas aparecem conforme as mensagens são recebidas ou importadas.' : 'Conecte o WhatsApp para começar a receber mensagens dos seus clientes.'}
+                action={!viewAll ? <button type="button" className={buttonClass.primary} onClick={() => setFilters({ page: 1, pageSize: 30 })}>Ver todas as conversas</button> : !hasOfficialChannel ? <button type="button" className={buttonClass.primary} onClick={connectChannel}>Conectar o WhatsApp</button> : undefined}
               />
             )}
             <ul className="divide-y divide-slate-100">

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mail, RefreshCw, UserPlus, X } from 'lucide-react'
 import {
   ignoreSender,
   listMailMessages,
   listMailSenders,
   readMailMessage,
+  replyMailMessage,
   registerSenderAsContact,
   type MailMessage,
   type MailSender,
@@ -23,9 +24,7 @@ function formatDate(value: string | null) {
 /**
  * Caixa de entrada real da conta configurada em Configurações de email.
  *
- * A tela existe para duas coisas: ler o que chegou e transformar remetente em
- * contato do CRM sem digitar de novo. Por isso a coluna da direita é o
- * cadastro, não um preview bonito.
+ * Permite ler, responder e transformar remetentes em contatos do CRM.
  */
 function MailInbox() {
   const [messages, setMessages] = useState<MailMessage[]>([])
@@ -40,6 +39,11 @@ function MailInbox() {
   const [offset, setOffset] = useState(0)
   const [totalCaixa, setTotalCaixa] = useState(0)
   const [verHtml, setVerHtml] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [replyState, setReplyState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [replyError, setReplyError] = useState('')
+  const replyAttempt = useRef<{ uid: number; text: string; requestId: string } | null>(null)
+  const sendingReply = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -67,10 +71,35 @@ function MailInbox() {
     setBusy(`msg-${uid}`)
     try {
       setSelected(await readMailMessage(uid))
+      setReplyText('')
+      setReplyState('idle')
+      setReplyError('')
+      replyAttempt.current = null
+      setVerHtml(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Falha ao abrir a mensagem.')
     } finally {
       setBusy('')
+    }
+  }
+
+  async function sendReply() {
+    if (!selected || !replyText.trim() || sendingReply.current || busy.startsWith('msg-')) return
+    const uid = selected.message.uid
+    const attempt = replyAttempt.current ?? { uid, text: replyText.trim(), requestId: crypto.randomUUID() }
+    replyAttempt.current = attempt
+    sendingReply.current = true
+    setReplyState('sending')
+    setReplyError('')
+    try {
+      await replyMailMessage(attempt.uid, attempt.text, attempt.requestId)
+      setReplyState('sent')
+      setReplyText('')
+    } catch (caught) {
+      setReplyState('error')
+      setReplyError(caught instanceof Error ? caught.message : 'Não foi possível confirmar o envio.')
+    } finally {
+      sendingReply.current = false
     }
   }
 
@@ -200,7 +229,7 @@ function MailInbox() {
                   key={item.uid}
                   className={`block w-full px-4 py-3 text-left hover:bg-slate-50 ${selected?.message.uid === item.uid ? 'bg-blue-50' : ''}`}
                   onClick={() => void openMessage(item.uid)}
-                  disabled={busy === `msg-${item.uid}`}
+                  disabled={busy.startsWith('msg-') || replyState === 'sending'}
                 >
                   <p className="truncate text-sm font-medium">{item.fromName || item.fromEmail}</p>
                   <p className="truncate text-sm text-slate-600">{item.subject}</p>
@@ -242,6 +271,28 @@ function MailInbox() {
                 ) : (
                   <pre className="whitespace-pre-wrap break-words text-sm text-slate-700">{selected.text || '(sem texto)'}</pre>
                 )}
+                <div className="space-y-3 border-t border-slate-200 pt-4">
+                  <label className="block text-sm font-medium" htmlFor="mail-reply">Responder ao remetente</label>
+                  <p className="text-xs text-slate-500">A resposta usa o endereço de resposta informado na mensagem original.</p>
+                  <textarea
+                    id="mail-reply"
+                    className="min-h-32 w-full rounded border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
+                    placeholder="Escreva sua resposta"
+                    value={replyText}
+                    maxLength={50_000}
+                    disabled={replyState !== 'idle'}
+                    onChange={(event) => setReplyText(event.target.value)}
+                  />
+                  {replyError && <p role="alert" className="text-sm text-red-700">{replyError}</p>}
+                  {replyState === 'sent' && <p role="status" className="text-sm text-emerald-700">Resposta enviada.</p>}
+                  <button
+                    className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    onClick={() => void sendReply()}
+                    disabled={replyState === 'sending' || replyState === 'sent' || busy.startsWith('msg-') || !replyText.trim()}
+                  >
+                    {replyState === 'sending' ? 'Enviando…' : replyState === 'error' ? 'Verificar envio' : 'Enviar resposta'}
+                  </button>
+                </div>
               </div>
             )}
           </section>

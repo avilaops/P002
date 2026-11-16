@@ -99,7 +99,7 @@ type MediaRow = {
   status: string;
 };
 
-async function persistBytes(tenantId: string, bytes: Buffer, mimeType: string, fileName: string | null) {
+export async function persistBytes(tenantId: string, bytes: Buffer, mimeType: string, fileName: string | null) {
   const relativeDir = tenantId;
   const relativePath = join(relativeDir, `${randomUUID()}.${extensionFor(mimeType, fileName)}`);
   const absolute = join(mediaDir(), relativePath);

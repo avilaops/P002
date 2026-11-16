@@ -19,9 +19,17 @@ A configuração mantém a restrição existente a administradores e gerentes. O
 
 As rotas são `/api/integrations/evolution/status`, `/connect` e `/sync`. Não aceitam tenant ou nome de instância do navegador: derivam a empresa da sessão. Os endpoints antigos de QR redirecionam para o fluxo novo.
 
-Com a sincronização habilitada, o backend consulta a cada 15 segundos os canais Evolution criados pelo CRM, verifica o estado e importa até 100 registros recentes por ciclo. As mensagens são deduplicadas por empresa e ID externo. O recebimento atualiza o inbox pelo SSE existente. Webhooks de outras aplicações não são alterados.
+Com a sincronização habilitada, o backend consulta os canais Evolution criados pelo CRM e importa o histórico disponível em páginas, com progresso persistido para continuar nos próximos ciclos. As mensagens são deduplicadas por empresa e ID externo. O recebimento atualiza o inbox pelo SSE existente. A caixa e o cartão de conexão mostram o andamento e eventuais falhas.
 
-Este conector importa textos de conversas individuais e legendas de mídia. Grupos, anexos binários e mensagens sem texto não são importados. Não é uma importação completa de todo o histórico. Envios só aparecem como aceitos após receber ID real da Evolution; falhas ficam como falhas no CRM.
+O conector importa conversas individuais, grupos e mensagens sem texto. Arquivos são recuperados quando ainda estão disponíveis no provedor; a indisponibilidade deve aparecer na mensagem. Envios só aparecem como aceitos após receber ID real da Evolution; falhas ficam como falhas no CRM.
+
+## Persistência e histórico em produção
+
+No ambiente da Evolution, habilite `DATABASE_SAVE_DATA_HISTORIC=true`, `DATABASE_SAVE_DATA_NEW_MESSAGE=true`, `DATABASE_SAVE_DATA_CHATS=true` e `DATABASE_SAVE_MESSAGE_UPDATE=true`. A instância precisa de `syncFullHistory=true`; instâncias novas recebem essa opção no cadastro. Preserve o volume de sessões ao recriar o serviço.
+
+Em 16/11/2026, a Evolution estava conectada, mas as quatro opções de persistência estavam desabilitadas e a instância tinha zero mensagens armazenadas. As opções foram habilitadas com backup do ambiente e recriação somente do serviço, preservando a sessão. Após a mudança, a instância permaneceu aberta e passou a armazenar mensagens.
+
+A importação percorre tudo o que a Evolution disponibiliza. Habilitar persistência não recupera automaticamente mensagens antigas que nunca foram armazenadas. O WhatsApp pode disponibilizar mais histórico posteriormente. Não desconecte nem apague a sessão para tentar recuperar conteúdo sem avaliar essa necessidade.
 
 ## Verificação
 

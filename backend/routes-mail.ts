@@ -4,6 +4,7 @@ import { extname, join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { query } from "./db.js";
+import { registerMailReplyRoutes } from "./mail-reply.js";
 import { enviadosHoje, readSettings, saveSettings } from "./automation.js";
 import {
   checkMailAccount,
@@ -127,6 +128,7 @@ function unsubscribePage(title: string, body: string, form = "") {
 }
 
 export function registerMailRoutes(app: FastifyInstance, deps: Dependencies) {
+  registerMailReplyRoutes(app, deps);
   const { requireAuth, encryptSecret, decryptSecret, recordEvent } = deps;
 
   // ── Conta de e-mail ──────────────────────────────────────────────────────
