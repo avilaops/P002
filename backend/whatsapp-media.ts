@@ -1,11 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { query } from "./db.js";
+import { createMediaStorage, isR2KeyForTenant } from "./media-storage.js";
 import { publishRealtimeAsync } from "./realtime.js";
 
 /**
@@ -22,9 +19,6 @@ import { publishRealtimeAsync } from "./realtime.js";
  * pode ir para o navegador: ela vaza o acesso a conta. Por isso guardamos a
  * copia e servimos por uma rota autenticada.
  */
-
-const here = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(here, "..");
 
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -49,10 +43,6 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "text/plain": "txt",
 };
-
-export function mediaDir() {
-  return process.env.MEDIA_DIR ?? join(rootDir, "storage", "media");
-}
 
 export function maxMediaBytes() {
   const raw = Number(process.env.MEDIA_MAX_BYTES);
@@ -82,30 +72,20 @@ function safeFileName(name: string | null | undefined, fallback: string) {
   return clean.length > 0 && clean.length <= 180 ? clean : fallback;
 }
 
-/** Impede que um `storage_path` adulterado no banco leia fora do volume. */
-function resolveInsideMediaDir(storagePath: string) {
-  const base = resolve(mediaDir());
-  const full = resolve(base, storagePath);
-  if (full !== base && !full.startsWith(base + sep)) return null;
-  return full;
-}
-
 type MediaRow = {
   id: string;
   mime_type: string;
   file_name: string | null;
   file_size: number | null;
   storage_path: string | null;
+  storage_provider: "local" | "r2";
+  storage_key: string | null;
   status: string;
 };
 
-export async function persistBytes(tenantId: string, bytes: Buffer, mimeType: string, fileName: string | null) {
-  const relativeDir = tenantId;
-  const relativePath = join(relativeDir, `${randomUUID()}.${extensionFor(mimeType, fileName)}`);
-  const absolute = join(mediaDir(), relativePath);
-  await mkdir(dirname(absolute), { recursive: true });
-  await writeFile(absolute, bytes);
-  return { relativePath, sha256: createHash("sha256").update(bytes).digest("hex") };
+export async function persistBytes(tenantId: string, conversationId: string, bytes: Buffer, mimeType: string, fileName: string | null) {
+  const stored = await createMediaStorage().put({ tenantId, conversationId, bytes, mimeType, fileName });
+  return { ...stored, relativePath: stored.key };
 }
 
 /**
@@ -170,13 +150,20 @@ export async function ingestInboundMedia(input: {
   if (bytes.byteLength > limit) return fail(`Arquivo de ${bytes.byteLength} bytes acima do limite de ${limit}.`);
 
   const mimeType = metadata.mime_type ?? input.mimeTypeHint ?? "application/octet-stream";
-  const stored = await persistBytes(input.tenantId, bytes, mimeType, input.fileNameHint ?? null);
+  let stored;
+  try {
+    stored = await persistBytes(input.tenantId, input.conversationId, bytes, mimeType, input.fileNameHint ?? null);
+  } catch {
+    return fail("Falha ao armazenar a mídia com segurança.");
+  }
 
   await query(
     `update message_media
-     set mime_type = $2, file_size = $3, sha256 = $4, storage_path = $5, status = 'ready', error_message = null, updated_at = now()
+     set mime_type = $2, file_size = $3, sha256 = $4, storage_provider = $5, storage_key = $6,
+         storage_path = case when $5 = 'local' then $6 else null end,
+         status = 'ready', error_message = null, updated_at = now()
      where id = $1`,
-    [mediaRowId, mimeType, bytes.byteLength, metadata.sha256 ?? stored.sha256, stored.relativePath],
+    [mediaRowId, mimeType, bytes.byteLength, stored.sha256, stored.provider, stored.key],
   );
 
   publishRealtimeAsync({
@@ -218,20 +205,22 @@ export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRou
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
 
     const result = await query<MediaRow>(
-      "select id, mime_type, file_name, file_size, storage_path, status from message_media where tenant_id = $1 and id = $2",
+      "select id, mime_type, file_name, file_size, storage_path, storage_provider, storage_key, status from message_media where tenant_id = $1 and id = $2",
       [user.tenant_id, id],
     );
     const media = result.rows[0];
     if (!media) return reply.code(404).send({ error: "Midia nao encontrada." });
-    if (media.status !== "ready" || !media.storage_path) return reply.code(409).send({ error: "Midia ainda nao esta disponivel.", status: media.status });
+    const storageKey = media.storage_key ?? media.storage_path;
+    if (media.status !== "ready" || !storageKey) return reply.code(409).send({ error: "Midia ainda nao esta disponivel.", status: media.status });
+    if (media.storage_provider === "r2" && !isR2KeyForTenant(storageKey, user.tenant_id)) {
+      return reply.code(404).send({ error: "Midia nao encontrada." });
+    }
 
-    const absolute = resolveInsideMediaDir(media.storage_path);
-    if (!absolute) return reply.code(404).send({ error: "Midia nao encontrada." });
-
+    let bytes: Buffer;
     try {
-      await stat(absolute);
+      bytes = (await createMediaStorage().get({ provider: media.storage_provider ?? "local", key: storageKey })).bytes;
     } catch {
-      return reply.code(404).send({ error: "Arquivo da midia nao esta mais no volume." });
+      return reply.code(404).send({ error: "Arquivo da midia nao foi encontrado no armazenamento." });
     }
 
     const inline = ["image", "audio", "video"].includes(whatsappTypeFor(media.mime_type));
@@ -242,7 +231,7 @@ export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRou
     // Conteudo enviado por terceiros: sem script, sem frame, sem plugin.
     reply.header("Content-Security-Policy", "default-src 'none'; sandbox");
     if (media.file_size) reply.header("Content-Length", String(media.file_size));
-    return reply.send(createReadStream(absolute));
+    return reply.send(bytes);
   });
 
   /** Envia um anexo pela conversa: sobe para a Meta e grava a mensagem. */
@@ -317,6 +306,10 @@ export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRou
     if (caption && (whatsappType === "image" || whatsappType === "video" || whatsappType === "document")) payloadMedia.caption = caption;
     if (whatsappType === "document" && uploaded.filename) payloadMedia.filename = uploaded.filename;
 
+    // A cópia durável vem antes do envio externo. Se o armazenamento falhar,
+    // nada é enviado e o usuário pode repetir sem duplicar uma mensagem real.
+    const stored = await persistBytes(user.tenant_id, id, bytes, mimeType, uploaded.filename ?? null);
+
     const sendResponse = await fetch(`https://graph.facebook.com/${deps.graphVersion}/${row.channel_external_id}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${integration.access_token}`, "Content-Type": "application/json" },
@@ -324,24 +317,23 @@ export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRou
     });
     const sendData = (await sendResponse.json()) as { messages?: Array<{ id?: string }>; error?: { message?: string } };
 
-    const stored = await persistBytes(user.tenant_id, bytes, mimeType, uploaded.filename ?? null);
     const failed = !sendResponse.ok || !sendData.messages?.[0]?.id;
     const errorMessage = failed ? sendData.error?.message ?? "Falha ao enviar a midia pela Meta." : null;
 
     if (failed) {
       // O arquivo so existe para ser servido ao lado da mensagem enviada; sem
       // envio ele seria lixo permanente no volume.
-      await unlink(join(mediaDir(), stored.relativePath)).catch(() => {});
+      await createMediaStorage().delete({ provider: stored.provider, key: stored.key }).catch(() => {});
     }
 
     const mediaRow = failed
       ? null
       : (
           await query<{ id: string }>(
-            `insert into message_media (tenant_id, conversation_id, direction, external_id, mime_type, file_name, file_size, sha256, storage_path, caption, status)
-             values ($1, $2, 'outbound', $3, $4, $5, $6, $7, $8, $9, 'ready')
+            `insert into message_media (tenant_id, conversation_id, direction, external_id, mime_type, file_name, file_size, sha256, storage_provider, storage_key, storage_path, caption, status)
+             values ($1, $2, 'outbound', $3, $4, $5, $6, $7, $8, $9, case when $8 = 'local' then $9 else null end, $10, 'ready')
              returning id`,
-            [user.tenant_id, id, uploadData.id, mimeType, uploaded.filename ?? null, bytes.byteLength, stored.sha256, stored.relativePath, caption || null],
+            [user.tenant_id, id, uploadData.id, mimeType, uploaded.filename ?? null, bytes.byteLength, stored.sha256, stored.provider, stored.key, caption || null],
           )
         ).rows[0];
 

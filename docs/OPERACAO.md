@@ -135,6 +135,31 @@ A unit usa `WorkingDirectory=/opt/crm-avilaops-com`, um usuário próprio em `Us
 
 - `MEDIA_DIR` e `NEWSLETTER_STORAGE_PATH` apontam para fora da release. O despachante apaga as releases antigas depois de cada deploy aprovado, e o padrão (`storage/` dentro do app) iria junto.
 - O ambiente fica em `/opt/crm-avilaops-com/.env`, que o despachante leva de uma release para a outra.
+
+## Mídia do WhatsApp • Cloudflare R2
+
+O bucket privado de produção é `crm-avilaops-com-media`. O PostgreSQL guarda metadados; o binário fica no provedor registrado em `message_media.storage_provider` e `message_media.storage_key`.
+
+Variáveis obrigatórias para ativar novas gravações no R2:
+
+```dotenv
+MEDIA_STORAGE_PROVIDER=r2
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=crm-avilaops-com-media
+```
+
+A credencial deve ter leitura e gravação de objetos somente nesse bucket. Não habilite domínio público ou `r2.dev`. Primeiro mantenha `MEDIA_STORAGE_PROVIDER=local`, configure as credenciais e valide a leitura e gravação canária. Depois altere o provedor.
+
+O migrador começa em modo de inspeção e não exclui a origem:
+
+```bash
+npm run media:migrate-r2 -- --limit=100
+npm run media:migrate-r2 -- --apply --limit=100
+```
+
+Cada objeto é relido do R2 e comparado por tamanho e SHA-256 antes da atualização do banco. Para reverter novas gravações, use `MEDIA_STORAGE_PROVIDER=local` e mantenha as variáveis R2 para continuar lendo objetos já migrados.
 - O servidor escuta em `0.0.0.0`. No host, a porta 3020 só pode estar aberta para o Caddy.
 
 ## Logs

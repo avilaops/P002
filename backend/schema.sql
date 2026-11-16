@@ -277,7 +277,7 @@ alter table conversations add column if not exists last_read_at timestamptz;
 create index if not exists conversations_tenant_last_message_idx on conversations(tenant_id, last_message_at desc);
 create index if not exists messages_conversation_sent_at_idx on messages(tenant_id, conversation_id, sent_at);
 
--- Midia do WhatsApp. O binario fica no volume (`MEDIA_DIR`), nao no Postgres:
+-- Midia do WhatsApp. O binario fica no provedor configurado, nao no Postgres:
 -- audio e video de atendimento enchem o banco rapido e quebram o dump dos
 -- scripts de backup. A linha guarda o que a tela precisa para decidir o que
 -- renderizar antes de baixar o arquivo.
@@ -292,12 +292,22 @@ create table if not exists message_media (
   file_size int,
   sha256 text,
   storage_path text,
+  storage_provider text not null default 'local' check (storage_provider in ('local', 'r2')),
+  storage_key text,
   caption text,
   status text not null default 'pending',
   error_message text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table message_media add column if not exists storage_provider text not null default 'local';
+alter table message_media add column if not exists storage_key text;
+update message_media set storage_key = storage_path where storage_key is null and storage_path is not null;
+do $$ begin
+  alter table message_media add constraint message_media_storage_provider_check check (storage_provider in ('local', 'r2'));
+exception when duplicate_object then null;
+end $$;
 
 create index if not exists message_media_tenant_created_at_idx on message_media(tenant_id, created_at desc);
 create unique index if not exists message_media_tenant_external_id_idx on message_media(tenant_id, external_id) where external_id is not null;

@@ -110,14 +110,14 @@ test('mídia com falha é recuperada automaticamente após espera sem duplicar a
       if (sql.startsWith('select metadata')) return { rows: [{}] }
       if (sql.startsWith('select id from messages')) return { rows: messageCount ? [{ id: 'message' }] : [] }
       if (sql.includes('insert into messages')) { messageCount++; return { rows: [{ id: 'message' }] } }
-      if (sql.includes('insert into message_media')) { mediaStatus = params[10]; attemptedAt = Date.now(); return { rows: [{ id: 'media' }] } }
+      if (sql.includes('insert into message_media')) { mediaStatus = params[12]; attemptedAt = Date.now(); return { rows: [{ id: 'media' }] } }
       if (sql.startsWith('update message_media as media')) {
         assert.match(sql, /interval '1 minute'/)
         if (mediaStatus !== 'failed' || attemptedAt > Date.now() - 60_000) return { rows: [] }
         attemptedAt = Date.now()
         return { rows: [{ id: 'media', message_id: 'message', conversation_id: 'conversation', mime_type: 'image/png', file_name: null }] }
       }
-      if (sql.startsWith('update message_media set file_size')) { mediaStatus = 'ready'; storedPath = params[3] }
+      if (sql.startsWith('update message_media set file_size')) { mediaStatus = 'ready'; storedPath = params[4] }
       return { rows: [{ id: 'channel' }] }
     },
     fetch: async url => {

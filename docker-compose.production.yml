@@ -27,8 +27,8 @@ services:
     # O Postgres do host escuta no gateway da bridge padrao (172.17.0.1).
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
-      # Anexos do WhatsApp e imagens de newsletter. O volume nasce com o dono
-      # `node` (1000:1000), que e quem roda o processo.
+      # Compatibilidade com anexos antigos do WhatsApp e imagens de newsletter.
+      # Novas mídias podem usar R2; o volume permanece durante a migração.
       - storage:/app/storage
     labels:
       avilaops.domain: crm.avilaops.com

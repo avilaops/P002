@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { query, transaction } from './db.js'
 import { evolutionAddress, evolutionMessage } from './evolution-history.js'
+import { createMediaStorage } from './media-storage.js'
 import { maxMediaBytes, persistBytes } from './whatsapp-media.js'
 
 export type EvolutionConfig = { baseUrl: string; apiKey: string; tenantId: string; instanceName: string }
@@ -138,9 +139,9 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
     if (!media?.message_id || !media?.conversation_id) return
     try {
       const bytes = await client.media(item)
-      const stored = await persistBytes(config.tenantId, bytes, media.mime_type, media.file_name)
+      const stored = await persistBytes(config.tenantId, media.conversation_id, bytes, media.mime_type, media.file_name)
       await transact(async () => {
-        await db(`update message_media set file_size=$3,storage_path=$4,sha256=$5,status='ready',error_message=null,updated_at=now() where tenant_id=$1 and id=$2`, [config.tenantId, media.id, bytes.length, stored.relativePath, stored.sha256])
+        await db(`update message_media set file_size=$3,storage_provider=$4,storage_key=$5,storage_path=case when $4='local' then $5 else null end,sha256=$6,status='ready',error_message=null,updated_at=now() where tenant_id=$1 and id=$2`, [config.tenantId, media.id, bytes.length, stored.provider, stored.key, stored.sha256])
         await db(`update messages set metadata=metadata||'{"mediaUnavailable":false}'::jsonb where tenant_id=$1 and id=$2`, [config.tenantId, media.message_id])
       })
       deps.publish?.({ type: 'message.updated', tenantId: config.tenantId, conversationId: media.conversation_id, data: { id: media.message_id, media_id: media.id, media_status: 'ready', media_mime_type: media.mime_type, media_file_name: media.file_name, media_file_size: bytes.length } })
@@ -232,25 +233,27 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
           if (Date.now() >= deadline) { exhausted = true; break }
           continue
         }
+        const contactId = await deps.upsertContact!(config.tenantId, phone, phone.endsWith('@g.us') ? `Grupo ${phone.split('@')[0]}` : !fromMe && typeof item.pushName === 'string' ? item.pushName : undefined)
+        const conversationId = await deps.conversation!(config.tenantId, channelId, contactId)
         // Download before opening the database transaction. Expired attachments
         // remain visible with an explicit failure instead of disappearing.
-        let attachment: { mime: string; name: string | null; size: number | null; path: string | null; sha: string | null; error: string | null } | null = null
+        let attachment: { mime: string; name: string | null; size: number | null; provider: 'local' | 'r2'; key: string | null; path: string | null; sha: string | null; error: string | null } | null = null
         if (parsed.media) {
           const mime = typeof parsed.media.mimetype === 'string' ? parsed.media.mimetype : 'application/octet-stream'
           const name = typeof parsed.media.fileName === 'string' ? parsed.media.fileName.slice(0, 180) : null
-          attachment = { mime, name, size: null, path: null, sha: null, error: 'Arquivo não disponibilizado pela conexão do WhatsApp.' }
+          attachment = { mime, name, size: null, provider: 'local', key: null, path: null, sha: null, error: 'Arquivo não disponibilizado pela conexão do WhatsApp.' }
           try {
             const bytes = await client.media(item)
-            const stored = await persistBytes(config.tenantId, bytes, mime, name)
-            attachment = { mime, name, size: bytes.length, path: stored.relativePath, sha: stored.sha256, error: null }
+            const stored = await persistBytes(config.tenantId, conversationId, bytes, mime, name)
+            attachment = { mime, name, size: bytes.length, provider: stored.provider, key: stored.key, path: stored.provider === 'local' ? stored.key : null, sha: stored.sha256, error: null }
           } catch { /* Keep the message and expose attachment unavailability. */ }
         }
-        const saved = await transact(async () => {
+        let saved
+        try {
+          saved = await transact(async () => {
           await db("select pg_advisory_xact_lock(hashtextextended($1 || ':' || $2,0))", [config.tenantId, phone])
           const duplicate = await db('select id from messages where tenant_id=$1 and external_id=$2', [config.tenantId, externalId])
           if (duplicate.rows.length) return null
-          const contactId = await deps.upsertContact!(config.tenantId, phone, phone.endsWith('@g.us') ? `Grupo ${phone.split('@')[0]}` : !fromMe && typeof item.pushName === 'string' ? item.pushName : undefined)
-          const conversationId = await deps.conversation!(config.tenantId, channelId, contactId)
           const result = await db(
             `insert into messages(tenant_id,conversation_id,external_id,direction,sender_name,sender_phone,body,message_type,status,sent_at,metadata)
              values($1,$2,$3,$4,$5,$6,$7,$10,$8,$9,$11::jsonb) on conflict(tenant_id,external_id) do nothing returning *`,
@@ -258,14 +261,21 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
           )
           if (!result.rows.length) return null
           if (attachment) {
-            const media = await db(`insert into message_media(tenant_id,conversation_id,direction,external_id,mime_type,file_name,file_size,storage_path,sha256,caption,status,error_message) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict(tenant_id,external_id) where external_id is not null do update set updated_at=now() returning id`, [config.tenantId, conversationId, fromMe ? 'outbound' : 'inbound', externalId, attachment.mime, attachment.name, attachment.size, attachment.path, attachment.sha, parsed.media?.caption ?? null, attachment.error ? 'failed' : 'ready', attachment.error])
+            const media = await db(`insert into message_media(tenant_id,conversation_id,direction,external_id,mime_type,file_name,file_size,storage_provider,storage_key,storage_path,sha256,caption,status,error_message) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict(tenant_id,external_id) where external_id is not null do update set updated_at=now() returning id`, [config.tenantId, conversationId, fromMe ? 'outbound' : 'inbound', externalId, attachment.mime, attachment.name, attachment.size, attachment.provider, attachment.key, attachment.path, attachment.sha, parsed.media?.caption ?? null, attachment.error ? 'failed' : 'ready', attachment.error])
             await db('update messages set media_id=$3 where tenant_id=$1 and id=$2', [config.tenantId, result.rows[0].id, media.rows[0].id])
             Object.assign(result.rows[0], { media_id: media.rows[0].id, media_status: attachment.error ? 'failed' : 'ready', media_mime_type: attachment.mime, media_file_name: attachment.name, media_file_size: attachment.size, media_caption: parsed.media?.caption ?? null })
           }
           const conversation = await db(`update conversations set status=case when $3::timestamptz>=coalesce(last_message_at,$3::timestamptz) then case when $4 then 'open' else 'waiting' end else status end,unread_count=unread_count+case when $4 or $3::timestamptz<=coalesce(last_read_at,'epoch'::timestamptz) or $5 then 0 else 1 end,last_message_at=greatest(last_message_at,$3::timestamptz),last_customer_message_at=case when $4 then last_customer_message_at else greatest(last_customer_message_at,$3::timestamptz) end,last_agent_message_at=case when $4 then greatest(last_agent_message_at,$3::timestamptz) else last_agent_message_at end,updated_at=now() where tenant_id=$1 and id=$2 returning id,status,unread_count,last_message_at,last_customer_message_at,last_agent_message_at`, [config.tenantId, conversationId, sentAt, fromMe, item.status === 'READ' || item.status === 'PLAYED'])
           return { conversationId, message: result.rows[0], conversation: conversation.rows[0] }
-        })
-        if (!saved) continue
+          })
+        } catch (error) {
+          if (attachment?.key) await createMediaStorage().delete({ provider: attachment.provider, key: attachment.key }).catch(() => {})
+          throw error
+        }
+        if (!saved) {
+          if (attachment?.key) await createMediaStorage().delete({ provider: attachment.provider, key: attachment.key }).catch(() => {})
+          continue
+        }
         imported++
         deps.publish?.({ type: 'message.created', tenantId: config.tenantId, conversationId: saved.conversationId, data: { ...saved.message, historyImport: true } })
         deps.publish?.({ type: 'conversation.updated', tenantId: config.tenantId, conversationId: saved.conversationId, data: { ...saved.conversation, id: saved.conversationId } })
