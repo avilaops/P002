@@ -20,9 +20,10 @@
         "docs/superpowers/specs/2026-11-16-whatsapp-media-r2-design.md",
         "docs/superpowers/plans/2026-11-16-whatsapp-media-r2.md",
         "Bucket Cloudflare R2 crm-avilaops-com-media criado em 2026-11-16",
-        "137 testes backend, 69 testes web, 4 testes CLI, tipos, lint e build aprovados"
+        "137 testes backend, 69 testes web, 4 testes CLI, tipos, lint e build aprovados",
+        "Commit 98528e2 publicado pela pipeline 43955266478; produção saudável com schema aplicado e 13 mídias locais preservadas"
       ],
-      "ambiente": "implementação local aprovada; bucket privado sem r2.dev ou domínio público; produção ainda usa o volume local porque não há credencial R2 no servidor"
+      "ambiente": "código e schema em produção no commit 98528e2; bucket privado sem r2.dev ou domínio público; 13 mídias locais preservadas; ativação R2 e canário bloqueados pela ausência de credencial S3 no servidor"
     },
     {
       "id": "INBOX-20261116",

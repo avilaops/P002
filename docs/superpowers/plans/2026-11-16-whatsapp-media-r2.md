@@ -18,6 +18,10 @@
 - [x] Rodar testes direcionados, tipos, lint, suíte completa e build.
 - [ ] Configurar credenciais no servidor, validar um objeto canário e publicar sem migrar dados automaticamente.
 
+## Estado em produção
+
+O commit `98528e2` foi publicado pela pipeline `43955266478`. O serviço está saudável, o schema contém `storage_provider` e `storage_key` e as 13 mídias existentes permanecem como `local`. O bucket está privado, com `r2.dev` desabilitado e sem domínio customizado. A ativação e o canário aguardam uma credencial S3 de leitura e gravação restrita ao bucket; nenhuma variável R2 existe no servidor atualmente.
+
 ## Regras de implantação
 
 - Não criar acesso público ao bucket.
