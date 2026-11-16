@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 // Never seed or migrate the normal application database.
 const enabled = process.env.CRM_INTEGRATION_TEST === '1';
-let app, db, realtime, tenantA, tenantB, admin, agent, other, contact, company, foreignContact, foreignCompany, foreignStage, conversation, lead;
+let app, db, realtime, tenantA, tenantB, admin, agent, manager, other, contact, company, foreignContact, foreignCompany, foreignStage, conversation, lead;
 const cookies = {};
 const hash = value => createHash('sha256').update(value).digest('hex');
 async function call(method,url,body,as='admin') {
@@ -29,7 +29,7 @@ before(async()=>{
     const salt='testsalt';const password=`scrypt$${salt}$${scryptSync('test-password',salt,64).toString('hex')}`;
     await db.query('insert into users(id,tenant_id,name,email,role,password_hash) values($1,$2,$3,$4,$5,$6)',[id,tenant,name,`${name}@example.test`,role,password]);
     await db.query("insert into sessions(tenant_id,user_id,token_hash,expires_at) values($1,$2,$3,now()+interval '1 day')",[tenant,id,hash(token)]);
-    if(name==='admin')admin=id;if(name==='agent')agent=id;if(name==='other')other=id;
+    if(name==='admin')admin=id;if(name==='agent')agent=id;if(name==='manager')manager=id;if(name==='other')other=id;
   }
   const {buildApp}=await import('../../dist-server/server.js');app=await buildApp({background:false});
   company=(await ok('POST','/api/companies',{name:'Acme A',phone:'123'},'admin',201)).company;
@@ -68,6 +68,16 @@ test('cross-tenant writes and relational injection are rejected',{skip:!enabled}
 test('attendants and managers cannot create administrators',{skip:!enabled},async()=>{
   for(const as of ['agent','manager'])assert.equal((await call('POST','/api/users',{name:'Intruder',email:'intruder@example.test',role:'admin'},as)).statusCode,403);
   assert.equal((await call('POST','/api/pipelines',{name:'No',stages:[{name:'No'}]},'agent')).statusCode,403);
+});
+test('removal revokes sessions, preserves the user record and cannot remove self or another tenant',{skip:!enabled},async()=>{
+  assert.equal((await call('DELETE',`/api/users/${admin}`)).statusCode,400);
+  assert.equal((await call('DELETE',`/api/users/${other}`)).statusCode,404);
+  assert.equal((await call('DELETE',`/api/users/${manager}`,undefined,'agent')).statusCode,403);
+  await ok('DELETE',`/api/users/${manager}`);
+  const removed=(await db.query('select active,removed_at from users where tenant_id=$1 and id=$2',[tenantA,manager])).rows[0];
+  assert.equal(removed.active,false);assert.ok(removed.removed_at);
+  assert.equal((await call('GET','/api/contacts',undefined,'manager')).statusCode,401);
+  assert.ok(!(await ok('GET','/api/users')).users.some(user=>user.id===manager));
 });
 test('contacts and companies retain null clearing, tags, owner and timeline',{skip:!enabled},async()=>{
   const c=(await ok('PATCH',`/api/contacts/${contact.id}`,{phone:null,tags:['cliente'],assigned_user_id:admin})).contact;assert.equal(c.assigned_user_id,admin);assert.deepEqual(c.tags,['cliente']);assert.equal(c.phone,null);

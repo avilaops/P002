@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { FormField, FormSection, Notice } from '../../components/ui/Form'
 import { ToneBadge } from '../../components/ui/StatusBadge'
 import type { Tone } from '../../lib/connection'
-import { createUser, inviteUser, listUsers, updateUser, type CrmUser } from '../../lib/crm'
+import { createUser, inviteUser, listUsers, removeUser, updateUser, type CrmUser } from '../../lib/crm'
 import { afterInvite, inviteLine } from '../../lib/userInvite'
 import { initials, useSession } from '../../lib/session'
 import { buttonClass } from '../../lib/ui'
@@ -32,6 +32,7 @@ export function UsersSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [resending, setResending] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
   const [form, setForm] = useState(emptyForm)
   const [version, setVersion] = useState(0)
@@ -96,6 +97,21 @@ export function UsersSettings() {
       setFeedback({ tone: 'success', text: 'Usuário atualizado.' })
     } catch (error) {
       setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível atualizar o usuário.' })
+    }
+  }
+
+  async function remove(item: CrmUser) {
+    if (!window.confirm(`Remover ${item.name} da empresa? Esta ação não pode ser desfeita.`)) return
+    setRemoving(item.id)
+    setFeedback(null)
+    try {
+      await removeUser(item.id)
+      setUsers((current) => current.filter((user) => user.id !== item.id))
+      setFeedback({ tone: 'success', text: 'Usuário removido.' })
+    } catch (error) {
+      setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível remover o usuário.' })
+    } finally {
+      setRemoving(null)
     }
   }
 
@@ -189,6 +205,11 @@ export function UsersSettings() {
                     {!self && (
                       <button type="button" className={buttonClass.secondary} onClick={() => change(item.id, { active: !item.active })}>
                         {item.active ? 'Desativar' : 'Reativar'}
+                      </button>
+                    )}
+                    {!self && (
+                      <button type="button" className={buttonClass.danger} disabled={removing !== null} onClick={() => remove(item)}>
+                        {removing === item.id ? 'Removendo…' : 'Remover'}
                       </button>
                     )}
                   </div>

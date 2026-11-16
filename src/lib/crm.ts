@@ -207,6 +207,10 @@ export function updateUser(userId: string, input: Partial<{ name: string; email:
   })
 }
 
+export function removeUser(userId: string) {
+  return api<{ ok: true }>(`/api/users/${userId}`, { method: 'DELETE' })
+}
+
 export type ConversationsPage = {
   conversations: CrmConversation[]
   pagination: { page: number; pageSize: number; total: number }

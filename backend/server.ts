@@ -34,6 +34,7 @@ import { registerTeamRoutes } from "./routes-team.js";
 import { registerSettingsRoutes } from "./routes-settings.js";
 import { registerAccountRoutes } from "./routes-account.js";
 import { signOAuthState, verifyOAuthState } from "./oauth-state.js";
+import { userRemovalBlock } from "./user-removal.js";
 import {
   ERP_PROVIDER,
   ErpRequestError,
@@ -970,11 +971,13 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
 
     const requested = oidcTenantSlug ?? z.object({tenantSlug:z.string().max(120).optional()}).parse(request.query).tenantSlug;
     const memberships = await query<AuthUser & {active:boolean}>("select u.id,u.tenant_id,u.name,u.email,u.role,u.active from users u join tenants t on t.id=u.tenant_id where lower(u.email)=lower($1) and ($2::text is null or t.slug=$2)",[sessao.email,requested??null]);
-    if (memberships.rows.length > 1) return reply.code(409).send({error:"Informe o codigo da empresa para entrar."});
+    const availableMemberships = requested ? memberships.rows : memberships.rows.filter((membership) => membership.active);
+    if (availableMemberships.length > 1) return reply.code(409).send({error:"Informe o codigo da empresa para entrar."});
     if (requested && !memberships.rowCount) return reply.code(403).send({error:"Sem acesso a esta empresa."});
-    const tenantId = memberships.rows[0]?.tenant_id ?? await getTenantId();
-    const existente = memberships;
-    let user = existente.rows[0];
+    // Uma linha removida continua como bloqueio de acesso e histórico. Sem um
+    // tenant explícito, porém, ela não disputa seleção com outra empresa ativa.
+    let user = availableMemberships[0] ?? memberships.rows[0];
+    const tenantId = user?.tenant_id ?? await getTenantId();
 
     if (user && !user.active) {
       return reply.code(403).send({ error: "Usuario desativado no CRM." });
@@ -1050,7 +1053,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     const tenantId = user.tenant_id;
     const [tenant, users, contacts, channels, conversations, messages, leads, tasks, companies] = await Promise.all([
       query("select id, name, slug, created_at from tenants where id = $1", [tenantId]),
-      query("select id, name, email, role, active, created_at from users where tenant_id = $1 order by created_at", [tenantId]),
+      query("select id, name, email, role, active, created_at from users where tenant_id = $1 and removed_at is null order by created_at", [tenantId]),
       query("select id, name, email, phone, company, company_id, source, created_at from contacts where tenant_id = $1 order by created_at desc limit 50", [tenantId]),
       query("select id, provider, external_id, display_name, phone_number, status, metadata, created_at from channels where tenant_id = $1 order by created_at desc", [tenantId]),
       query("select id, channel_id, contact_id, assigned_user_id, status, archived_at, last_message_at, last_customer_message_at, last_agent_message_at, created_at from conversations where tenant_id = $1 order by coalesce(last_message_at, created_at) desc limit 50", [tenantId]),
@@ -1088,7 +1091,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     const result = await query(
       `select ${USER_COLUMNS}
        from users
-       where tenant_id = $1
+       where tenant_id = $1 and removed_at is null
        order by created_at asc`,
       [user.tenant_id],
     );
@@ -1102,11 +1105,15 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     const body = createUserSchema.parse(request.body);
     try {
       const result = await query<InvitedUser>(
-        `insert into users (tenant_id, name, email, role, password_hash, active)
-         values ($1, $2, lower($3), $4, null, true)
+        `insert into users (tenant_id, name, email, role, password_hash, active, removed_at)
+         values ($1, $2, lower($3), $4, null, true, null)
+         on conflict (tenant_id, email) do update
+         set name = excluded.name, role = excluded.role, active = true, removed_at = null
+         where users.removed_at is not null
          returning ${USER_COLUMNS}`,
         [user.tenant_id, body.name, body.email, body.role],
       );
+      if (!result.rows[0]) return reply.code(409).send({ error: "Ja existe um usuario com este email." });
       const requestId = (request as RequestWithId).requestId;
       await recordEvent(user.tenant_id, "user", "user.created", { email: body.email, role: body.role }, user.id, result.rows[0].id, requestId);
       const created = await inviteUser(user, result.rows[0], requestId);
@@ -1135,7 +1142,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
              email = coalesce(lower($4), email),
              role = coalesce($5, role),
              active = coalesce($6, active)
-         where tenant_id = $1 and id = $2
+         where tenant_id = $1 and id = $2 and removed_at is null
          returning ${USER_COLUMNS}`,
         [user.tenant_id, id, body.name ?? null, body.email ?? null, body.role ?? null, body.active ?? null],
       );
@@ -1150,6 +1157,44 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     }
   });
 
+  app.delete("/api/users/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (user.role !== "admin") return reply.code(403).send({ error: "Permissao insuficiente." });
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    await transaction(async () => {
+      // Serializa alterações de administradores da mesma empresa: sem esta
+      // trava, duas remoções simultâneas poderiam enxergar dois admins e
+      // apagar ambos.
+      await query("select pg_advisory_xact_lock(hashtext($1))", [user.tenant_id]);
+      const target = await query<{ id: string; role: string; active: boolean }>(
+        "select id, role, active from users where tenant_id = $1 and id = $2 and removed_at is null for update",
+        [user.tenant_id, id],
+      );
+      if (!target.rows[0]) {
+        throw Object.assign(new Error("Usuario nao encontrado."), { statusCode: 404 });
+      }
+      const admins = await query<{ total: string }>(
+        "select count(*)::text as total from users where tenant_id = $1 and role = 'admin' and active = true",
+        [user.tenant_id],
+      );
+      const blocked = userRemovalBlock({
+        actorId: user.id,
+        targetId: target.rows[0].id,
+        targetRole: target.rows[0].role,
+        targetActive: target.rows[0].active,
+        activeAdminCount: Number(admins.rows[0]?.total ?? 0),
+      });
+      if (blocked) throw Object.assign(new Error(blocked), { statusCode: 400 });
+
+      await query("update users set active = false, removed_at = now() where tenant_id = $1 and id = $2", [user.tenant_id, id]);
+      await query("delete from sessions where tenant_id = $1 and user_id = $2", [user.tenant_id, id]);
+      await recordEvent(user.tenant_id, "user", "user.deleted", {}, user.id, id, (request as RequestWithId).requestId);
+    });
+    return { ok: true };
+  });
+
   // "Enviar convite de novo": a mesma mensagem do cadastro, outra vez.
   app.post("/api/users/:id/invite", async (request, reply) => {
     const user = await requireAuth(request, reply);
@@ -1160,7 +1205,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     if (!checkRateLimit(`convite:${user.tenant_id}:${id}`, 3, 10 * 60 * 1000)) {
       return reply.code(429).send({ error: "Convite enviado ha pouco. Aguarde alguns minutos para enviar de novo." });
     }
-    const found = await query<InvitedUser>(`select ${USER_COLUMNS} from users where tenant_id = $1 and id = $2`, [user.tenant_id, id]);
+    const found = await query<InvitedUser>(`select ${USER_COLUMNS} from users where tenant_id = $1 and id = $2 and removed_at is null`, [user.tenant_id, id]);
     if (!found.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
     if (!found.rows[0].active) return reply.code(400).send({ error: "Reative a pessoa antes de enviar o convite." });
     return { user: await inviteUser(user, found.rows[0], (request as RequestWithId).requestId) };
