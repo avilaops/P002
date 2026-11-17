@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { createEvolutionClient, evolutionConfig, registerEvolutionRoutes } from '../../dist-server/evolution.js'
+import { createEvolutionClient, evolutionConfig, evolutionWebhookSecret, evolutionWebhookUrl, registerEvolutionRoutes } from '../../dist-server/evolution.js'
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
 const configuration = { baseUrl: 'https://evolution.example', apiKey: 'secret-test-only', tenantId, instanceName: 'crm-test' }
@@ -40,6 +40,76 @@ test('envio usa contrato v2 e não inventa sucesso após falha ou timeout', asyn
   await assert.rejects(createEvolutionClient(configuration, async () => Response.json({ secret: 'raw' }, { status: 401 })).sendText('55', 'texto'), /Evolution/)
   await assert.rejects(createEvolutionClient(configuration, async () => { throw Error('private network detail') }).sendText('55', 'texto'), /Evolution/)
   await assert.rejects(createEvolutionClient(configuration, async () => Response.json({})).sendText('55', 'texto'), /Evolution/)
+})
+
+test('configura webhook por instância com eventos mínimos e segredo derivado', async () => {
+  const previous = process.env.PUBLIC_APP_URL
+  process.env.PUBLIC_APP_URL = 'https://crm.avilaops.com'
+  try {
+    assert.equal(evolutionWebhookUrl(), 'https://crm.avilaops.com/api/integrations/evolution/webhook')
+    assert.equal(evolutionWebhookSecret(configuration), evolutionWebhookSecret(configuration))
+    assert.notEqual(evolutionWebhookSecret(configuration), evolutionWebhookSecret({ ...configuration, tenantId: '22222222-2222-4222-8222-222222222222' }))
+    const calls = []
+    const client = createEvolutionClient(configuration, async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) })
+      return Response.json({ webhook: { enabled: true } }, { status: 201 })
+    })
+    await client.configureWebhook(evolutionWebhookUrl(), evolutionWebhookSecret(configuration))
+    assert.equal(calls[0].url, 'https://evolution.example/webhook/set/crm-test')
+    assert.equal(calls[0].body.webhook.url, 'https://crm.avilaops.com/api/integrations/evolution/webhook')
+    assert.deepEqual(calls[0].body.webhook.events, ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE', 'CONNECTION_UPDATE'])
+    assert.equal(calls[0].body.webhook.headers['x-avila-webhook-token'], evolutionWebhookSecret(configuration))
+  } finally {
+    if (previous === undefined) delete process.env.PUBLIC_APP_URL
+    else process.env.PUBLIC_APP_URL = previous
+  }
+})
+
+test('webhook rejeita segredo inválido antes de sincronizar a instância', async () => {
+  const app = Fastify()
+  let fetched = false
+  registerEvolutionRoutes(app, {
+    config: () => configuration,
+    requireAuth: async () => null,
+    canManage: () => false,
+    fetch: async () => { fetched = true; return Response.json({}) },
+    query: async (sql) => sql.startsWith('select tenant_id') ? { rows: [{ tenant_id: tenantId }] } : { rows: [] },
+  })
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/integrations/evolution/webhook',
+    headers: { 'x-avila-webhook-token': 'invalido' },
+    payload: { instance: configuration.instanceName, event: 'messages.upsert', data: {} },
+  })
+  assert.equal(response.statusCode, 401)
+  assert.equal(fetched, false)
+  await app.close()
+})
+
+test('webhook autenticado confirma rápido e registra o evento para reconciliação', async () => {
+  const app = Fastify()
+  const writes = []
+  registerEvolutionRoutes(app, {
+    config: () => configuration,
+    requireAuth: async () => null,
+    canManage: () => false,
+    fetch: async () => Response.json({}),
+    query: async (sql, params) => {
+      if (sql.startsWith('select tenant_id')) return { rows: [{ tenant_id: tenantId }] }
+      writes.push({ sql, params })
+      return { rows: [] }
+    },
+  })
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/integrations/evolution/webhook',
+    headers: { 'x-avila-webhook-token': evolutionWebhookSecret(configuration) },
+    payload: { instance: configuration.instanceName, event: 'messages.upsert', data: {} },
+  })
+  assert.equal(response.statusCode, 202)
+  assert.deepEqual(response.json(), { received: true })
+  assert.ok(writes.some(({ sql, params }) => sql.includes('evolutionWebhook') && params[0] === tenantId))
+  await app.close()
 })
 
 test('rotas exigem sessão, gestão e vínculo da empresa antes de acessar a API', async () => {

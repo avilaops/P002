@@ -4,6 +4,28 @@
   "members": [],
   "tasks": [
     {
+      "id": "EVOLUTION-WEBHOOK-001",
+      "title": "Receber mensagens da Evolution em tempo real",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Configurar webhook autenticado por instância e reconciliar mensagens imediatamente, mantendo a varredura periódica como recuperação.",
+      "criteriosAceite": [
+        "Cada instância recebe URL e segredo próprios",
+        "Eventos desconhecidos ou sem autenticação não iniciam sincronização",
+        "Mensagens e atualizações disparam reconciliação imediata",
+        "Fallback periódico continua ativo",
+        "Saúde e último evento ficam registrados no canal",
+        "Testes, pipeline e produção aprovados"
+      ],
+      "evidencias": [
+        "backend/evolution.ts",
+        "backend/test/evolution.test.mjs",
+        "Contrato da Evolution 2.3.7 verificado no código instalado no servidor",
+        "10 testes direcionados aprovados"
+      ],
+      "ambiente": "implementação local validada; publicação pendente"
+    },
+    {
       "id": "COMPANY-CNPJ-001",
       "title": "Preencher empresa pela consulta do CNPJ",
       "status": "concluido",

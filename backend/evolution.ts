@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { query, transaction } from './db.js'
 import { evolutionAddress, evolutionMessage } from './evolution-history.js'
 import { createMediaStorage } from './media-storage.js'
@@ -37,6 +38,30 @@ export function evolutionConfig(requestedTenantId?: string): EvolutionConfig | n
 
 export class EvolutionError extends Error {
   constructor(message = 'Não foi possível comunicar com a Evolution API.', public status = 502) { super(message) }
+}
+
+export function evolutionWebhookSecret(config: EvolutionConfig) {
+  return createHmac('sha256', config.apiKey)
+    .update(`avila-crm:evolution-webhook:${config.tenantId}:${config.instanceName}`)
+    .digest('hex')
+}
+
+export function evolutionWebhookUrl() {
+  const configured = process.env.PUBLIC_APP_URL?.trim().replace(/\/$/, '')
+  if (!configured) return null
+  try {
+    const url = new URL(configured)
+    const local = ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+    if ((url.protocol !== 'https:' && !local) || url.username || url.password || url.search || url.hash || url.pathname !== '/') return null
+    return `${url.origin}/api/integrations/evolution/webhook`
+  } catch { return null }
+}
+
+function secureEqual(expected: string, received: string | string[] | undefined) {
+  if (typeof received !== 'string') return false
+  const left = Buffer.from(expected, 'utf8')
+  const right = Buffer.from(received, 'utf8')
+  return left.length === right.length && timingSafeEqual(left, right)
 }
 
 export function createEvolutionClient(config: EvolutionConfig, transport: typeof fetch = fetch) {
@@ -120,6 +145,19 @@ export function createEvolutionClient(config: EvolutionConfig, transport: typeof
         throw error
       }
     },
+    async configureWebhook(url: string, secret: string) {
+      const data = await request(`/webhook/set/${instance}`, {
+        webhook: {
+          enabled: true,
+          url,
+          headers: { 'x-avila-webhook-token': secret },
+          byEvents: false,
+          base64: false,
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE', 'CONNECTION_UPDATE'],
+        },
+      }) as Json
+      return data
+    },
   }
 }
 
@@ -182,6 +220,30 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
   async function saveProgress(config: EvolutionConfig, progress: Json) {
     await db(`update channels set metadata=jsonb_set(metadata,'{evolutionSync}',$3::jsonb),updated_at=now() where tenant_id=$1 and provider='evolution' and external_id=$2`, [config.tenantId, config.instanceName, JSON.stringify(progress)])
   }
+  async function saveWebhookHealth(config: EvolutionConfig, health: Json) {
+    await db(
+      `update channels set metadata=jsonb_set(metadata,'{evolutionWebhook}',$3::jsonb),updated_at=now()
+       where tenant_id=$1 and provider='evolution' and external_id=$2`,
+      [config.tenantId, config.instanceName, JSON.stringify(health)],
+    )
+  }
+  async function ensureWebhook(config: EvolutionConfig, client: ReturnType<typeof createEvolutionClient>) {
+    const url = evolutionWebhookUrl()
+    if (!url) return false
+    try {
+      await client.configureWebhook(url, evolutionWebhookSecret(config))
+      await saveWebhookHealth(config, { state: 'connected', url, lastConfiguredAt: new Date().toISOString(), error: null })
+      return true
+    } catch (error) {
+      await saveWebhookHealth(config, {
+        state: 'error',
+        url,
+        lastAttemptAt: new Date().toISOString(),
+        error: error instanceof EvolutionError ? error.message : 'Não foi possível configurar a atualização em tempo real.',
+      }).catch(() => {})
+      return false
+    }
+  }
   async function retryFailedMedia(config: EvolutionConfig, client: ReturnType<typeof createEvolutionClient>, item: Json) {
     // Claim the attempt atomically. updated_at is also the persisted backoff,
     // including across restarts and simultaneous workers. Never stop retrying
@@ -240,6 +302,7 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
         return { configured: true, instanceName: connection.config.instanceName, channelId: null, state: 'disconnected', phone: null }
       }
       const channelId = await channel(connection.config, status)
+      if (status.state === 'connected') void ensureWebhook(connection.config, connection.client)
       return { configured: true, instanceName: connection.config.instanceName, channelId, ...status, sync: await syncProgress(connection.config) }
     } catch (error) { return failure(reply, error) }
   })
@@ -251,6 +314,7 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
     try {
       const status = await connection.client.connect()
       await channel(connection.config, status)
+      if (status.state === 'connected') void ensureWebhook(connection.config, connection.client)
       return { instanceName: connection.config.instanceName, ...status }
     } catch (error) { return failure(reply, error) }
   })
@@ -376,8 +440,40 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
     try { return await synchronize(connection.config, connection.client) } catch (error) { return failure(reply, error) }
   })
 
+  app.post('/api/integrations/evolution/webhook', async (request, reply) => {
+    const payload = request.body as Json | null
+    const instanceName = typeof payload?.instance === 'string' ? payload.instance : ''
+    const event = typeof payload?.event === 'string' ? payload.event.toLowerCase() : ''
+    if (!instanceName || !/^[a-zA-Z0-9_-]{1,120}$/.test(instanceName)) return reply.code(400).send({ error: 'Evento inválido.' })
+    const found = await db<{ tenant_id: string }>(
+      `select tenant_id from channels where provider='evolution' and external_id=$1 limit 1`,
+      [instanceName],
+    )
+    const tenantId = found.rows[0]?.tenant_id
+    const config = tenantId ? (deps.config ?? evolutionConfig)(tenantId) : null
+    if (!config || config.instanceName !== instanceName || !secureEqual(evolutionWebhookSecret(config), request.headers['x-avila-webhook-token'])) {
+      return reply.code(401).send({ error: 'Webhook não autorizado.' })
+    }
+    const accepted = new Set(['messages.upsert', 'messages.update', 'send.message', 'connection.update'])
+    if (!accepted.has(event)) return reply.code(202).send({ received: true })
+    const client = createEvolutionClient(config, deps.fetch)
+    const schedule = (delay: number) => {
+      const timer = setTimeout(() => {
+        void synchronize(config, client).catch((error) => {
+          if (!(error instanceof EvolutionError) || error.status !== 409) app.log.info('Evolution: webhook recebido; reconciliação será repetida pelo fallback.')
+        })
+      }, delay)
+      timer.unref()
+    }
+    schedule(250)
+    schedule(2_500)
+    await saveWebhookHealth(config, { state: 'connected', lastEventAt: new Date().toISOString(), lastEvent: event, error: null }).catch(() => {})
+    return reply.code(202).send({ received: true })
+  })
+
   if (deps.background === true && process.env.EVOLUTION_SYNC_ENABLED === 'true') {
     let running = false
+    const webhookConfiguredAt = new Map<string, number>()
     const run = async () => {
       if (running) return
       running = true
@@ -386,6 +482,10 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
         for (const channel of channels.rows) {
           const config = (deps.config ?? evolutionConfig)(channel.tenant_id)
           if (!config || config.instanceName !== channel.external_id) continue
+          if (Date.now() - (webhookConfiguredAt.get(config.tenantId) ?? 0) >= 5 * 60_000) {
+            await ensureWebhook(config, createEvolutionClient(config, deps.fetch))
+            webhookConfiguredAt.set(config.tenantId, Date.now())
+          }
           try { await synchronize(config, createEvolutionClient(config, deps.fetch)) } catch { app.log.info('Evolution: sincronização adiada; conexão indisponível.') }
         }
       } catch { app.log.info('Evolution: não foi possível consultar os canais para sincronizar.') }
