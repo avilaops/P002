@@ -1,4 +1,5 @@
 import { RecordRelations } from '../CrmRecordTools'
+import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
   Clock,
@@ -13,6 +14,7 @@ import {
   createTask,
   deleteContact,
   getContactTimeline,
+  openContactWhatsApp,
   updateContact,
   updateTask,
   type CrmContact,
@@ -31,6 +33,7 @@ export default function ContactDetailDrawer({
   onUpdated,
   onDeleted,
 }: ContactDetailDrawerProps) {
+  const router = useRouter()
   const [data, setData] = useState<{
     contact: CrmContact
     events: { id: string; entity_type: string; event_type: string; payload: Record<string, unknown>; created_at: string }[]
@@ -52,6 +55,7 @@ export default function ContactDetailDrawer({
   const [saving, setSaving] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [addingTask, setAddingTask] = useState(false)
+  const [openingWhatsapp, setOpeningWhatsapp] = useState(false)
 
   const loadDetails = () => {
     setLoading(true)
@@ -141,6 +145,19 @@ export default function ContactDetailDrawer({
     }
   }
 
+  const handleOpenWhatsapp = async () => {
+    setOpeningWhatsapp(true)
+    try {
+      const result = await openContactWhatsApp(contactId)
+      onClose()
+      router.push(`/communications/inbox/${result.conversation.id}/`)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Não foi possível abrir a conversa do WhatsApp.')
+    } finally {
+      setOpeningWhatsapp(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
       <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl animate-in slide-in-from-right duration-200">
@@ -186,15 +203,15 @@ export default function ContactDetailDrawer({
             <div className="border-b border-slate-100 bg-slate-50/60 p-5">
               <div className="flex flex-wrap items-center gap-2">
                 {data.contact.phone && (
-                  <a
-                    href={`https://wa.me/${data.contact.phone.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={handleOpenWhatsapp}
+                    disabled={openingWhatsapp}
                     className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
                   >
                     <MessageSquare size={13} />
-                    <span>WhatsApp</span>
-                  </a>
+                    <span>{openingWhatsapp ? 'Abrindo…' : 'WhatsApp'}</span>
+                  </button>
                 )}
                 {data.contact.email && (
                   <a

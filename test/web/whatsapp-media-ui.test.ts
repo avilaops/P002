@@ -11,3 +11,11 @@ test('caixa WhatsApp usa avatar, prévia privada e transcrição sem expor URL d
   assert.match(source, /bg-\[#d9fdd3\]/)
   assert.doesNotMatch(source, /profilePictureUrl/)
 })
+
+test('botão do contato abre a conversa dentro do CRM', async () => {
+  const source = await readFile(new URL('../../src/components/drawers/ContactDetailDrawer.tsx', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /wa\.me/)
+  assert.match(source, /openContactWhatsApp\(contactId\)/)
+  assert.match(source, /router\.push\(`\/communications\/inbox\/\$\{result\.conversation\.id\}\//)
+})

@@ -433,6 +433,12 @@ export function getContactTimeline(contactId: string) {
   }>(`/api/contacts/${contactId}/timeline`)
 }
 
+export function openContactWhatsApp(contactId: string) {
+  return api<{ conversation: { id: string }; created: boolean }>(`/api/contacts/${contactId}/whatsapp-conversation`, {
+    method: 'POST',
+  })
+}
+
 export function createLead(input: {
   title: string
   assigned_user_id?: string

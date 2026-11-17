@@ -1746,6 +1746,45 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     };
   });
 
+  app.post("/api/contacts/:id/whatsapp-conversation", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const contact = await query<{ id: string; phone: string | null }>(
+      "select id, phone from contacts where tenant_id = $1 and id = $2",
+      [user.tenant_id, id],
+    );
+    if (!contact.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
+    if (!contact.rows[0].phone?.trim()) return reply.code(400).send({ error: "Cadastre um telefone para iniciar a conversa." });
+
+    const existing = await query<{ id: string }>(
+      `select c.id
+       from conversations c
+       join channels ch on ch.tenant_id = c.tenant_id and ch.id = c.channel_id
+       where c.tenant_id = $1 and c.contact_id = $2 and c.archived_at is null
+         and ch.provider in ('messageria','qrcode','evolution','whatsapp')
+       order by c.updated_at desc
+       limit 1`,
+      [user.tenant_id, id],
+    );
+    if (existing.rows[0]) return { conversation: existing.rows[0], created: false };
+
+    const channel = await query<{ id: string }>(
+      `select id from channels
+       where tenant_id = $1 and status = 'connected'
+         and provider in ('messageria','qrcode','evolution','whatsapp')
+       order by case provider when 'evolution' then 0 when 'messageria' then 1 when 'whatsapp' then 2 else 3 end,
+                updated_at desc
+       limit 1`,
+      [user.tenant_id],
+    );
+    if (!channel.rows[0]) return reply.code(409).send({ error: "Conecte um canal do WhatsApp antes de iniciar a conversa." });
+
+    const conversationId = await getOrCreateConversation(user.tenant_id, channel.rows[0].id, id);
+    await recordEvent(user.tenant_id, "conversation", "conversation.created_from_contact", { contact_id: id, channel_id: channel.rows[0].id }, user.id, conversationId, (request as RequestWithId).requestId);
+    return reply.code(201).send({ conversation: { id: conversationId }, created: true });
+  });
+
   app.post("/api/leads", async (request, reply) => {
     const user = await requireAuth(request, reply); if (!user) return;
 
