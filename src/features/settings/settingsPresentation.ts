@@ -17,6 +17,13 @@ export const integrationDefinitions: IntegrationDefinition[] = [
   { id: 'pagamentos', name: 'Pagamentos', description: 'Links de pagamento e status no negócio', action: 'Ver detalhes', unavailableLabel: 'Indisponível' },
 ]
 
+export function connectionStateFromSettled<T>(
+  result: PromiseSettledResult<T>,
+  resolve: (value: T) => ConnectionState,
+): ConnectionState {
+  return result.status === 'rejected' ? 'error' : resolve(result.value)
+}
+
 export function connectionSummary(states: Array<ConnectionState | null>) {
   return states.reduce(
     (summary, state) => {

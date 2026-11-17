@@ -51,6 +51,9 @@ test('identidade prioriza nome e telefone humano sem mostrar LID', () => {
   assert.equal(contactSecondaryLabel(conversation({ contact_name: 'Wílian Silveira', contact_phone: '1203634173120565446@lid' })), 'WhatsApp')
   assert.equal(contactLabel(conversation({ contact_phone: '17997811471' })), '(17) 99781-1471')
   assert.equal(contactLabel(conversation({ contact_phone: '1203634173120565446@lid' })), 'Contato sem nome')
+  assert.equal(contactLabel(conversation({ contact_name: '1203634173120565446@lid', contact_phone: '1203634173120565446@lid' })), 'Contato sem nome')
+  assert.equal(contactLabel(conversation({ contact_phone: '(17) 99781-1471' })), '(17) 99781-1471')
+  assert.equal(contactSecondaryLabel(conversation({ contact_name: 'Wílian Silveira', contact_phone: '(17) 99781-1471' })), '(17) 99781-1471')
 })
 
 test('agrupamento preserva ordem e cria um divisor por dia', () => {

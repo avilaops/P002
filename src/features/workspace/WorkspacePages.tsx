@@ -802,7 +802,7 @@ function MessageBubble({ message }: { message: CrmMessage }) {
         <p className={`mt-2 flex items-center justify-end gap-1 text-xs ${inbound ? 'text-slate-500' : 'text-blue-100'}`}>
           <span>{new Date(message.sent_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}{message.message_type === 'template' ? ' • modelo' : ''}</span>
           {!inbound && <MessageStatusIcon status={status.icon} />}
-          {!inbound && <span className="sr-only">{status.label}</span>}
+          {!inbound && <span>{status.label}</span>}
         </p>
         {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
       </div>

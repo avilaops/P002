@@ -11,17 +11,23 @@ export type MessageDayGroup = {
 
 function humanPhone(value: string | null | undefined) {
   const phone = value?.trim() ?? ''
-  if (!phone || phone.includes('@') || /\D/.test(phone.replace(/^\+/, ''))) return ''
+  if (!phone || phone.includes('@') || !/\d/.test(phone)) return ''
   return formatPhoneBR(phone)
 }
 
+function humanName(value: string | null | undefined) {
+  const name = value?.trim() ?? ''
+  if (!name || /@(lid|g\.us|s\.whatsapp\.net)$/i.test(name)) return ''
+  return name
+}
+
 export function contactLabel(conversation: CrmConversation) {
-  return conversation.contact_name?.trim() || humanPhone(conversation.contact_phone) || 'Contato sem nome'
+  return humanName(conversation.contact_name) || humanPhone(conversation.contact_phone) || 'Contato sem nome'
 }
 
 export function contactSecondaryLabel(conversation: CrmConversation) {
   const phone = humanPhone(conversation.contact_phone)
-  if (conversation.contact_name?.trim() && phone) return phone
+  if (humanName(conversation.contact_name) && phone) return phone
   return conversation.channel_name?.trim() || 'WhatsApp'
 }
 

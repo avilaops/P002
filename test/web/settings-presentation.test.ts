@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { connectionSummary, integrationDefinitions } from '../../src/features/settings/settingsPresentation'
+import { connectionStateFromSettled, connectionSummary, integrationDefinitions } from '../../src/features/settings/settingsPresentation'
 
 test('catálogo de integrações não repete canais de conversa', () => {
   assert.deepEqual(integrationDefinitions.map((item) => item.id), [
@@ -28,4 +28,11 @@ test('cada integração oferece ação e estado textual explícitos', () => {
     assert.ok(item.action.length > 0, item.id)
     assert.ok(item.unavailableLabel.length > 0, item.id)
   }
+})
+
+test('falha de consulta vira erro em vez de carregamento permanente', () => {
+  const rejected: PromiseRejectedResult = { status: 'rejected', reason: new Error('offline') }
+  const fulfilled: PromiseFulfilledResult<{ connected: boolean }> = { status: 'fulfilled', value: { connected: true } }
+  assert.equal(connectionStateFromSettled(rejected, () => 'connected'), 'error')
+  assert.equal(connectionStateFromSettled(fulfilled, (value) => value.connected ? 'connected' : 'disconnected'), 'connected')
 })

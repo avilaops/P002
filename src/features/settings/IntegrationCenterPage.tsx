@@ -7,14 +7,14 @@ import type { ConnectionState } from '../../lib/connection'
 import { ApiError } from '../../lib/crm'
 import { disconnectGoogleIntegration, getGoogleAuthUrl, getGoogleIntegrationStatus } from '../../lib/googleCalendar'
 import { connectErp, disconnectErp, getErpStatus, type ErpStatus } from '../../lib/integrations'
-import { getMessageriaStatus, type MessageriaStatus } from '../../lib/messageria'
+import { getMessageriaStatus } from '../../lib/messageria'
 import { useNavigation } from '../../lib/navigationContext'
 import { buttonClass } from '../../lib/ui'
 import type { Page } from '../../types'
 import { SettingsFrame } from './SettingsFrame'
 import { getThreadsStatus, type ThreadsStatus } from '../../lib/threads'
 import { ThreadsSheet } from './ThreadsSheet'
-import { connectionSummary, integrationDefinitions } from './settingsPresentation'
+import { connectionStateFromSettled, connectionSummary, integrationDefinitions } from './settingsPresentation'
 
 type Item = {
   id: string
@@ -39,13 +39,13 @@ type Item = {
  */
 export default function IntegrationCenterPage() {
   const { navigate } = useNavigation()
-  const [messageria, setMessageria] = useState<MessageriaStatus | null>(null)
   const [erp, setErp] = useState<ErpStatus | null>(null)
   const [google, setGoogle] = useState<{ connected: boolean; email?: string } | null>(null)
   const [erpOpen, setErpOpen] = useState(false)
   const [threads, setThreads] = useState<ThreadsStatus | null>(null)
   const [threadsError, setThreadsError] = useState('')
   const [threadsOpen, setThreadsOpen] = useState(false)
+  const [loadStates, setLoadStates] = useState<Record<'messageria' | 'erp' | 'google', ConnectionState | null>>({ messageria: null, erp: null, google: null })
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null)
   const [version, setVersion] = useState(0)
   const reload = () => setVersion((value) => value + 1)
@@ -55,10 +55,13 @@ export default function IntegrationCenterPage() {
     Promise.allSettled([getMessageriaStatus(), getErpStatus(), getGoogleIntegrationStatus(), getThreadsStatus()]).then(
       ([status, erpStatus, googleStatus, threadsStatus]) => {
         if (!active) return
-        const messageriaStatus = status.status === 'fulfilled' ? status.value : null
-        setMessageria(messageriaStatus)
         setErp(erpStatus.status === 'fulfilled' ? erpStatus.value : null)
         setGoogle(googleStatus.status === 'fulfilled' ? googleStatus.value : null)
+        setLoadStates({
+          messageria: connectionStateFromSettled(status, (value) => !value.connected ? 'disconnected' : value.erro ? 'error' : 'connected'),
+          erp: connectionStateFromSettled(erpStatus, (value) => value.connected ? 'connected' : 'disconnected'),
+          google: connectionStateFromSettled(googleStatus, (value) => value.connected ? 'connected' : 'disconnected'),
+        })
         setThreads(threadsStatus.status === 'fulfilled' ? threadsStatus.value : null)
         setThreadsError(threadsStatus.status === 'rejected' ? (threadsStatus.reason instanceof Error ? threadsStatus.reason.message : 'Threads indisponível.') : '')
       },
@@ -94,7 +97,6 @@ export default function IntegrationCenterPage() {
   }
 
   const go = (page: Page) => () => navigate(page)
-  const messageriaState: ConnectionState | null = messageria === null ? null : !messageria.connected ? 'disconnected' : messageria.erro ? 'error' : 'connected'
   const definition = (id: (typeof integrationDefinitions)[number]['id']) => integrationDefinitions.find((item) => item.id === id)!
 
   const items: Item[] = [
@@ -103,14 +105,14 @@ export default function IntegrationCenterPage() {
     {
       ...definition('messageria'),
       icon: Send,
-      state: messageriaState,
+      state: loadStates.messageria,
       onOpen: go('whatsapp-channel'),
       actionLabel: definition('messageria').action,
     },
     {
       ...definition('erp'),
       icon: Database,
-      state: erp === null ? null : erp.connected ? 'connected' : 'disconnected',
+      state: loadStates.erp,
       onOpen: () => setErpOpen(true),
       actionLabel: erp?.connected ? 'Gerenciar' : definition('erp').action,
     },
@@ -118,7 +120,7 @@ export default function IntegrationCenterPage() {
       ...definition('google'),
       description: google?.connected && google.email ? `Tarefas na agenda de ${google.email}` : 'Tarefas e reuniões na sua agenda do Google',
       icon: Calendar,
-      state: google === null ? null : google.connected ? 'connected' : 'disconnected',
+      state: loadStates.google,
       onOpen: () => void toggleGoogle(),
       actionLabel: google?.connected ? 'Desconectar' : definition('google').action,
     },
