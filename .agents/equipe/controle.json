@@ -72,7 +72,7 @@
     {
       "id": "META-OAUTH-001",
       "title": "Conectar Instagram e Messenger por OAuth",
-      "status": "em-revisao",
+      "status": "concluido",
       "responsavel": null,
       "objetivo": "Permitir que um administrador autorize os ativos da Meta para sua empresa sem digitar tokens ou segredos no CRM.",
       "criteriosAceite": [
@@ -85,9 +85,12 @@
       "evidencias": [
         "backend/test/omnichannel.test.mjs",
         "test/web/omnichannel-client.test.ts",
-        "10 testes omnichannel, 79 testes web, tipos, lint e build aprovados"
+        "10 testes omnichannel, 79 testes web, tipos, lint e build aprovados",
+        "Pipeline 44105663225 aprovada com validação, imagem e deploy",
+        "Produção saudável no commit 466d310; banco conectado; endpoint OAuth autenticado e webhook Meta verificado",
+        "Assinatura de app do objeto Page ativa para messages e messaging_postbacks"
       ],
-      "ambiente": "permissões do conector Auth e segredo do CRM configurados em produção; código aguardando publicação"
+      "ambiente": "produção no commit 466d310; conector Auth solicita permissões de mensagens; segredo global carregado no CRM; backup /opt/crm-avilaops-com/.env.bak-meta-oauth-20261117T143727Z"
     },
     {
       "id": "WHATSAPP-R2-001",
