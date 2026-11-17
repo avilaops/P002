@@ -95,6 +95,9 @@ create table if not exists channels (
   updated_at timestamptz not null default now(),
   unique (tenant_id, provider, external_id)
 );
+create unique index if not exists channels_meta_external_unique
+  on channels (provider, external_id)
+  where provider in ('instagram', 'messenger') and status = 'connected';
 
 alter table channels add column if not exists team_name text;
 alter table channels add column if not exists last_sync_at timestamptz;

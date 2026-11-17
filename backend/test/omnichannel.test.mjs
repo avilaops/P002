@@ -67,6 +67,7 @@ test('configuração social exige gestão e nunca devolve credenciais', async (t
     decryptSecret: (value) => value,
     recordEvent: async () => {},
     publish: () => {},
+    fetch: async () => new Response(JSON.stringify({ id: 'page-1', name: 'Página verificada' }), { status: 200, headers: { 'content-type': 'application/json' } }),
     query: async (sql, params = []) => { calls.push({ sql, params }); return { rows: [], rowCount: 0 } },
   })
   t.after(() => app.close())
@@ -79,6 +80,44 @@ test('configuração social exige gestão e nunca devolve credenciais', async (t
   assert.match(serialized, /enc\(/)
   assert.doesNotMatch(serialized, /"access-token-secret"(?!\))/)
   assert.ok(calls.every((call) => !call.params.includes('tenant-b')))
+})
+
+test('configuração social recusa token de outra Página antes de gravar', async (t) => {
+  const writes = []
+  const app = Fastify()
+  registerOmnichannelRoutes(app, {
+    requireAuth: async () => ({ id: 'user-a', tenant_id: 'tenant-a', name: 'A', email: 'a@example.test', role: 'admin' }),
+    canManage: () => true,
+    encryptSecret: value => value,
+    decryptSecret: value => value,
+    recordEvent: async () => {},
+    publish: () => {},
+    fetch: async () => new Response(JSON.stringify({ id: 'page-de-outra-empresa', name: 'Outra' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    query: async (sql, params = []) => { writes.push({ sql, params }); return { rows: [], rowCount: 0 } },
+  })
+  t.after(() => app.close())
+
+  const response = await app.inject({ method: 'PUT', url: '/api/channels/meta-messaging', payload: { pageId: 'page-1', pageName: 'Página', accessToken: 'access-token-secret', appSecret: 'app-secret', verifyToken: 'verify-token-long' } })
+  assert.equal(response.statusCode, 400, response.body)
+  assert.equal(writes.length, 0)
+})
+
+test('configuração social não toma um canal ativo de outra empresa', async (t) => {
+  const app = Fastify()
+  registerOmnichannelRoutes(app, {
+    requireAuth: async () => ({ id: 'user-a', tenant_id: 'tenant-a', name: 'A', email: 'a@example.test', role: 'admin' }),
+    canManage: () => true,
+    encryptSecret: value => value,
+    decryptSecret: value => value,
+    recordEvent: async () => {},
+    publish: () => {},
+    fetch: async () => new Response(JSON.stringify({ id: 'page-1', name: 'Página' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    query: async sql => sql.includes('union all') ? { rows: [{ tenant_id: 'tenant-b' }], rowCount: 1 } : { rows: [], rowCount: 0 },
+  })
+  t.after(() => app.close())
+
+  const response = await app.inject({ method: 'PUT', url: '/api/channels/meta-messaging', payload: { pageId: 'page-1', pageName: 'Página', accessToken: 'access-token-secret', appSecret: 'app-secret', verifyToken: 'verify-token-long' } })
+  assert.equal(response.statusCode, 409, response.body)
 })
 
 test('sessão pública do chat respeita origem e persiste somente hash do token', async (t) => {
@@ -116,4 +155,62 @@ test('sessão pública do chat respeita origem e persiste somente hash do token'
   assert.equal(calls.filter((call) => call.sql.includes('insert into contacts')).length, writesBefore + 1)
   assert.equal(sessionWrite.params[5], hashVisitorToken(token))
   assert.notEqual(sessionWrite.params[5], token)
+})
+
+test('widget usa a origem pública HTTPS e não duplica mensagens persistidas', async (t) => {
+  const previous = process.env.PUBLIC_APP_URL
+  process.env.PUBLIC_APP_URL = 'https://crm.example.test'
+  const channel = { id: 'channel-a', tenant_id: 'tenant-a', external_id: '11111111-1111-4111-8111-111111111111', display_name: 'Site', status: 'connected', metadata: { allowedOrigins: ['https://site.example'] } }
+  const app = Fastify()
+  registerOmnichannelRoutes(app, {
+    requireAuth: async () => null,
+    canManage: () => false,
+    encryptSecret: value => value,
+    decryptSecret: value => value,
+    recordEvent: async () => {},
+    publish: () => {},
+    query: async () => ({ rows: [channel], rowCount: 1 }),
+  })
+  t.after(() => {
+    if (previous === undefined) delete process.env.PUBLIC_APP_URL
+    else process.env.PUBLIC_APP_URL = previous
+    return app.close()
+  })
+
+  const response = await app.inject({ method: 'GET', url: `/api/public/chat/widget.js?key=${channel.external_id}` })
+  assert.equal(response.statusCode, 200, response.body)
+  assert.match(response.body, /https:\/\/crm\.example\.test/)
+  assert.match(response.body, /seen=new Set/)
+  assert.doesNotMatch(response.body, /request\.protocol/)
+})
+
+test('mensagem do chat atualiza a conversa antes de publicar a mensagem', async (t) => {
+  const events = []
+  const channel = { id: 'channel-a', tenant_id: 'tenant-a', external_id: '11111111-1111-4111-8111-111111111111', display_name: 'Site', status: 'connected', metadata: { allowedOrigins: ['https://site.example'] } }
+  const app = Fastify()
+  registerOmnichannelRoutes(app, {
+    requireAuth: async () => null,
+    canManage: () => false,
+    encryptSecret: value => value,
+    decryptSecret: value => value,
+    recordEvent: async () => {},
+    publish: event => events.push(event),
+    query: async (sql) => {
+      if (sql.includes("from channels where provider = 'webchat'")) return { rows: [channel], rowCount: 1 }
+      if (sql.includes('from webchat_sessions')) return { rows: [{ id: 'session-a', tenant_id: 'tenant-a', channel_id: 'channel-a', contact_id: 'contact-a', conversation_id: 'conversation-a', origin: 'https://site.example' }], rowCount: 1 }
+      if (sql.includes('insert into messages')) return { rows: [{ id: 'message-a', conversation_id: 'conversation-a', body: 'Olá', direction: 'inbound', sent_at: new Date().toISOString() }], rowCount: 1 }
+      if (sql.includes('update conversations')) return { rows: [{ id: 'conversation-a', unread_count: 1 }], rowCount: 1 }
+      return { rows: [], rowCount: 0 }
+    },
+  })
+  t.after(() => app.close())
+
+  const response = await app.inject({
+    method: 'POST',
+    url: `/api/public/chat/${channel.external_id}/messages`,
+    headers: { origin: 'https://site.example', authorization: 'Bearer visitor-token' },
+    payload: { body: 'Olá', idempotencyKey: '22222222-2222-4222-8222-222222222222' },
+  })
+  assert.equal(response.statusCode, 201, response.body)
+  assert.deepEqual(events.map(event => event.type), ['conversation.updated', 'message.created'])
 })

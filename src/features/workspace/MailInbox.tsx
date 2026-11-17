@@ -226,25 +226,28 @@ function MailInbox() {
               </p>
             )}
             <div className="max-h-[60vh] divide-y divide-slate-100 overflow-auto">
-              {threads.map((thread) => {
-                const item = thread.latest
-                return (
-                <button
-                  key={thread.key}
-                  className={`block w-full px-4 py-3 text-left hover:bg-slate-50 ${selected?.message.uid === item.uid ? 'bg-blue-50' : ''}`}
-                  onClick={() => void openMessage(item.uid)}
-                  disabled={busy.startsWith('msg-') || replyState === 'sending'}
-                >
-                  <span className="flex items-start gap-2">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{item.fromName || item.fromEmail}</span>
-                      <span className="block truncate text-sm text-slate-600">{item.subject}</span>
-                      <span className="text-xs text-slate-400">{formatDate(item.date)}{thread.count > 1 ? ` • ${thread.count} mensagens` : ''}</span>
-                    </span>
-                    {item.contactId && <UserCheck size={16} className="mt-0.5 shrink-0 text-emerald-600" aria-label="Contato cadastrado" />}
-                  </span>
-                </button>
-              )})}
+              {threads.map((thread) => (
+                <section key={thread.key} aria-label={`Conversa de e-mail • ${thread.latest.subject}`}>
+                  {thread.count > 1 && <p className="bg-slate-50 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{thread.count} mensagens nesta conversa</p>}
+                  {[...thread.messages].reverse().map((item) => (
+                    <button
+                      key={item.uid}
+                      className={`block w-full border-t border-slate-100 px-4 py-3 text-left first:border-t-0 hover:bg-slate-50 ${selected?.message.uid === item.uid ? 'bg-blue-50' : ''}`}
+                      onClick={() => void openMessage(item.uid)}
+                      disabled={busy.startsWith('msg-') || replyState === 'sending'}
+                    >
+                      <span className="flex items-start gap-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{item.fromName || item.fromEmail}</span>
+                          <span className="block truncate text-sm text-slate-600">{item.subject}</span>
+                          <span className="text-xs text-slate-400">{formatDate(item.date)}</span>
+                        </span>
+                        {item.contactId && <UserCheck size={16} className="mt-0.5 shrink-0 text-emerald-600" aria-label="Contato cadastrado" />}
+                      </span>
+                    </button>
+                  ))}
+                </section>
+              ))}
             </div>
           </section>
 

@@ -27,6 +27,7 @@ type Dependencies = {
 }
 
 type SocialChannel = { id: string; tenant_id: string; provider: 'instagram' | 'messenger'; external_id: string }
+type MetaAccount = { id?: string; name?: string; instagram_business_account?: { id?: string; name?: string; username?: string } }
 
 const metaConfigSchema = z.object({
   pageId: z.string().trim().min(2).max(100),
@@ -116,13 +117,28 @@ async function ingestExternalMessage(query: Query, channel: SocialChannel, event
     [channel.tenant_id, identity.conversationId, event.externalId, channel.provider, event.body, event.messageType, event.sentAt],
   )
   if (!inserted.rows[0]) return null
-  await query(
+  const conversation = await query(
     `update conversations set unread_count = unread_count + 1, last_message_at = $3,
        last_customer_message_at = $3, updated_at = now()
-     where tenant_id = $1 and id = $2`,
+     where tenant_id = $1 and id = $2
+     returning id, status, unread_count, last_message_at, last_customer_message_at, updated_at`,
     [channel.tenant_id, identity.conversationId, event.sentAt],
   )
-  return { conversationId: identity.conversationId, message: inserted.rows[0] }
+  return { conversationId: identity.conversationId, conversation: conversation.rows[0], message: inserted.rows[0] }
+}
+
+async function verifyMetaAccount(fetcher: typeof fetch, input: z.infer<typeof metaConfigSchema>) {
+  const response = await fetcher('https://graph.facebook.com/v23.0/me?fields=id,name,instagram_business_account{id,name,username}', {
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    signal: AbortSignal.timeout(15_000),
+  })
+  const account = await response.json().catch(() => null) as (MetaAccount & { error?: { message?: string } }) | null
+  if (!response.ok || !account?.id) throw new Error(account?.error?.message || 'A Meta não confirmou a conta informada.')
+  if (account.id !== input.pageId) throw new Error('O token não pertence à Página informada.')
+  if (input.instagramId && account.instagram_business_account?.id !== input.instagramId) {
+    throw new Error('A conta do Instagram não pertence à Página informada.')
+  }
+  return account
 }
 
 async function readWidgetChannel(query: Query, widgetKey: string) {
@@ -198,6 +214,24 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
     if (!user) return
     if (!deps.canManage(user)) return reply.code(403).send({ error: 'Permissão insuficiente.' })
     const input = metaConfigSchema.parse(request.body)
+    let account: MetaAccount
+    try {
+      account = await verifyMetaAccount(fetcher, input)
+    } catch (caught) {
+      return reply.code(400).send({ error: caught instanceof Error ? caught.message : 'Credenciais inválidas.' })
+    }
+    const occupied = await query<{ tenant_id: string }>(
+      `select tenant_id from channels where provider = 'messenger' and external_id = $1 and status = 'connected'
+       union all select tenant_id from channels where provider = 'instagram' and external_id = $2 and status = 'connected'`,
+      [input.pageId, input.instagramId || null],
+    )
+    if (occupied.rows.some((row) => row.tenant_id !== user.tenant_id)) {
+      return reply.code(409).send({ error: 'Esta conta Meta já está vinculada a outra empresa.' })
+    }
+    const pageName = account.name?.trim() || input.pageName
+    const instagramName = account.instagram_business_account?.username?.trim()
+      || account.instagram_business_account?.name?.trim()
+      || input.instagramName
     const encryptedSecrets = deps.encryptSecret(JSON.stringify({ appSecret: input.appSecret, verifyToken: input.verifyToken }))
     const encryptedToken = deps.encryptSecret(input.accessToken)
     await query(
@@ -206,22 +240,29 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
        on conflict (tenant_id, provider) do update set app_id = excluded.app_id, app_secret = excluded.app_secret,
          access_token = excluded.access_token, user_name = excluded.user_name, metadata = excluded.metadata,
          connected_at = now(), updated_at = now()`,
-      [user.tenant_id, input.pageId, encryptedSecrets, encryptedToken, input.pageName, JSON.stringify({ instagramId: input.instagramId || null, instagramName: input.instagramName || null })],
+      [user.tenant_id, input.pageId, encryptedSecrets, encryptedToken, pageName, JSON.stringify({ instagramId: input.instagramId || null, instagramName: instagramName || null })],
     )
     await query(
       `insert into channels (tenant_id, provider, external_id, display_name, status, metadata, updated_at)
        values ($1, 'messenger', $2, $3, 'connected', '{}'::jsonb, now())
        on conflict (tenant_id, provider, external_id) do update set display_name = excluded.display_name, status = 'connected', error_message = null, updated_at = now()`,
-      [user.tenant_id, input.pageId, input.pageName],
+      [user.tenant_id, input.pageId, pageName],
     )
     if (input.instagramId) {
       await query(
         `insert into channels (tenant_id, provider, external_id, display_name, status, metadata, updated_at)
          values ($1, 'instagram', $2, $3, 'connected', '{}'::jsonb, now())
          on conflict (tenant_id, provider, external_id) do update set display_name = excluded.display_name, status = 'connected', error_message = null, updated_at = now()`,
-        [user.tenant_id, input.instagramId, input.instagramName || input.pageName],
+        [user.tenant_id, input.instagramId, instagramName || pageName],
       )
     }
+    await query(
+      `update channels set status = 'disconnected', updated_at = now()
+        where tenant_id = $1 and provider in ('instagram', 'messenger')
+          and ((provider = 'messenger' and external_id <> $2)
+            or (provider = 'instagram' and ($3::text is null or external_id <> $3)))`,
+      [user.tenant_id, input.pageId, input.instagramId || null],
+    )
     await deps.recordEvent(user.tenant_id, 'integration', 'meta_messaging.connected', { page_id: input.pageId, instagram: Boolean(input.instagramId) }, user.id)
     return { connected: true }
   })
@@ -266,6 +307,7 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
       const saved = await ingestExternalMessage(query, channel, event)
       if (saved) {
         imported += 1
+        deps.publish({ type: 'conversation.updated', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.conversation })
         deps.publish({ type: 'message.created', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.message })
       }
     }
@@ -378,11 +420,13 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
       [session.tenant_id, session.conversation_id, input.idempotencyKey, input.body],
     )
     if (!saved.rows[0]) return { accepted: true, idempotent: true }
-    await query(
+    const conversation = await query(
       `update conversations set unread_count = unread_count + 1, last_message_at = now(),
-         last_customer_message_at = now(), updated_at = now() where tenant_id = $1 and id = $2`,
+         last_customer_message_at = now(), updated_at = now() where tenant_id = $1 and id = $2
+         returning id, status, unread_count, last_message_at, last_customer_message_at, updated_at`,
       [session.tenant_id, session.conversation_id],
     )
+    deps.publish({ type: 'conversation.updated', tenantId: session.tenant_id, conversationId: session.conversation_id, data: conversation.rows[0] })
     deps.publish({ type: 'message.created', tenantId: session.tenant_id, conversationId: session.conversation_id, data: saved.rows[0] })
     return reply.code(201).send({ accepted: true, message: saved.rows[0] })
   })
@@ -391,9 +435,8 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
     const { key } = z.object({ key: z.string().uuid() }).parse(request.query)
     const channel = await readWidgetChannel(query, key)
     if (!channel) return reply.code(404).send('')
-    const base = `${request.protocol}://${request.host}`
     const color = typeof channel.metadata.brandColor === 'string' ? channel.metadata.brandColor : '#2563eb'
-    const script = widgetScript(base, key, color)
+    const script = widgetScript(publicBaseUrl, key, color)
     return reply.type('application/javascript; charset=utf-8').header('Cache-Control', 'public, max-age=300').send(script)
   })
 
@@ -416,7 +459,7 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
 }
 
 function widgetScript(base: string, key: string, color: string) {
-  return `(()=>{if(window.__avilaCrmChat)return;window.__avilaCrmChat=1;const api=${JSON.stringify(base)},key=${JSON.stringify(key)},color=${JSON.stringify(color)};const host=document.createElement('div');host.style.cssText='position:fixed;right:20px;bottom:20px;z-index:2147483000;font-family:system-ui,sans-serif';const root=host.attachShadow({mode:'open'});root.innerHTML='<style>button{font:inherit}.open{width:56px;height:56px;border:0;border-radius:50%;background:'+color+';color:white;font-size:24px;cursor:pointer}.panel{display:none;width:min(360px,calc(100vw - 32px));height:520px;max-height:calc(100vh - 100px);background:white;border:1px solid #dbe2ea;border-radius:16px;box-shadow:0 18px 60px #0f172a33;overflow:hidden}.head{padding:14px 16px;background:'+color+';color:white;font-weight:700}.messages{height:340px;overflow:auto;padding:12px;background:#f8fafc}.msg{margin:8px 0;padding:9px 11px;border-radius:12px;background:white;color:#0f172a}.mine{background:'+color+';color:white;margin-left:34px}.form{display:flex;gap:8px;padding:10px}.form input{min-width:0;flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:9px}.form button{border:0;border-radius:9px;background:'+color+';color:white;padding:0 14px}.intro{padding:16px}.intro input{box-sizing:border-box;width:100%;margin:5px 0;padding:10px;border:1px solid #cbd5e1;border-radius:9px}.intro button{width:100%;margin-top:8px;padding:10px;border:0;border-radius:9px;background:'+color+';color:white}</style><button class="open" aria-label="Abrir atendimento">💬</button><section class="panel" aria-label="Chat de atendimento"><div class="head">Atendimento</div><div class="intro"><input name="name" placeholder="Seu nome"><input name="email" type="email" placeholder="Seu e-mail • opcional"><button>Começar conversa</button></div><div class="messages" hidden></div><form class="form" hidden><input aria-label="Mensagem" maxlength="4000" placeholder="Digite sua mensagem"><button>Enviar</button></form></section>';const open=root.querySelector('.open'),panel=root.querySelector('.panel'),intro=root.querySelector('.intro'),messages=root.querySelector('.messages'),form=root.querySelector('.form');let token='',after='';open.onclick=()=>{panel.style.display=panel.style.display==='block'?'none':'block'};const headers=()=>({'content-type':'application/json',authorization:'Bearer '+token});function add(body,mine){const el=document.createElement('div');el.className='msg'+(mine?' mine':'');el.textContent=body;messages.append(el);messages.scrollTop=messages.scrollHeight}async function poll(){if(!token)return;const r=await fetch(api+'/api/public/chat/'+key+'/messages'+(after?'?after='+encodeURIComponent(after):''),{headers:headers()});if(r.ok){const data=await r.json();for(const item of data.messages){add(item.body,item.direction==='inbound');after=item.sent_at}}setTimeout(poll,3000)}intro.querySelector('button').onclick=async()=>{const name=intro.querySelector('[name=name]').value||'Visitante',email=intro.querySelector('[name=email]').value||undefined;const r=await fetch(api+'/api/public/chat/'+key+'/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,email})});if(!r.ok)return;const data=await r.json();token=data.token;intro.hidden=true;messages.hidden=false;form.hidden=false;add(data.welcomeMessage,false);poll()};form.onsubmit=async e=>{e.preventDefault();const input=form.querySelector('input'),body=input.value.trim();if(!body)return;input.value='';add(body,true);await fetch(api+'/api/public/chat/'+key+'/messages',{method:'POST',headers:headers(),body:JSON.stringify({body,idempotencyKey:crypto.randomUUID()})})};document.body.append(host)})();`
+  return `(()=>{if(window.__avilaCrmChat)return;window.__avilaCrmChat=1;const api=${JSON.stringify(base)},key=${JSON.stringify(key)},color=${JSON.stringify(color)};const host=document.createElement('div');host.style.cssText='position:fixed;right:20px;bottom:20px;z-index:2147483000;font-family:system-ui,sans-serif';const root=host.attachShadow({mode:'open'});root.innerHTML='<style>button{font:inherit}.open{width:56px;height:56px;border:0;border-radius:50%;background:'+color+';color:white;font-size:24px;cursor:pointer}.panel{display:none;width:min(360px,calc(100vw - 32px));height:520px;max-height:calc(100vh - 100px);background:white;border:1px solid #dbe2ea;border-radius:16px;box-shadow:0 18px 60px #0f172a33;overflow:hidden}.head{padding:14px 16px;background:'+color+';color:white;font-weight:700}.messages{height:340px;overflow:auto;padding:12px;background:#f8fafc}.msg{margin:8px 0;padding:9px 11px;border-radius:12px;background:white;color:#0f172a}.mine{background:'+color+';color:white;margin-left:34px}.form{display:flex;gap:8px;padding:10px}.form input{min-width:0;flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:9px}.form button{border:0;border-radius:9px;background:'+color+';color:white;padding:0 14px}.intro{padding:16px}.intro input{box-sizing:border-box;width:100%;margin:5px 0;padding:10px;border:1px solid #cbd5e1;border-radius:9px}.intro button{width:100%;margin-top:8px;padding:10px;border:0;border-radius:9px;background:'+color+';color:white}</style><button class="open" aria-label="Abrir atendimento">💬</button><section class="panel" aria-label="Chat de atendimento"><div class="head">Atendimento</div><div class="intro"><input name="name" placeholder="Seu nome"><input name="email" type="email" placeholder="Seu e-mail • opcional"><button>Começar conversa</button></div><div class="messages" hidden></div><form class="form" hidden><input aria-label="Mensagem" maxlength="4000" placeholder="Digite sua mensagem"><button>Enviar</button></form></section>';const open=root.querySelector('.open'),panel=root.querySelector('.panel'),intro=root.querySelector('.intro'),messages=root.querySelector('.messages'),form=root.querySelector('.form'),seen=new Set;let token='',after='';open.onclick=()=>{panel.style.display=panel.style.display==='block'?'none':'block'};const headers=()=>({'content-type':'application/json',authorization:'Bearer '+token});function add(body,mine,id){if(id&&seen.has(id))return;if(id)seen.add(id);const el=document.createElement('div');el.className='msg'+(mine?' mine':'');el.textContent=body;messages.append(el);messages.scrollTop=messages.scrollHeight}async function poll(){if(!token)return;const r=await fetch(api+'/api/public/chat/'+key+'/messages'+(after?'?after='+encodeURIComponent(after):''),{headers:headers()});if(r.ok){const data=await r.json();for(const item of data.messages){add(item.body,item.direction==='inbound',item.id);after=item.sent_at}}setTimeout(poll,3000)}intro.querySelector('button').onclick=async()=>{const name=intro.querySelector('[name=name]').value||'Visitante',email=intro.querySelector('[name=email]').value||undefined;const r=await fetch(api+'/api/public/chat/'+key+'/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,email})});if(!r.ok)return;const data=await r.json();token=data.token;intro.hidden=true;messages.hidden=false;form.hidden=false;add(data.welcomeMessage,false);poll()};form.onsubmit=async e=>{e.preventDefault();const input=form.querySelector('input'),body=input.value.trim();if(!body)return;input.value='';const r=await fetch(api+'/api/public/chat/'+key+'/messages',{method:'POST',headers:headers(),body:JSON.stringify({body,idempotencyKey:crypto.randomUUID()})});if(r.ok){const data=await r.json();if(data.message)add(data.message.body,true,data.message.id)}};document.body.append(host)})();`
 }
 
 export type OmnichannelSender = ReturnType<typeof registerOmnichannelRoutes>['sendMetaText']

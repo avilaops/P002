@@ -382,11 +382,12 @@ function ChatInbox({
 
   async function handleSuggestReply() {
     if (!selected || suggesting) return
+    const conversationId = selected.id
     setSuggesting(true)
     setError('')
     try {
-      const result = await suggestConversationReply(selected.id)
-      setReply(result.suggestion)
+      const result = await suggestConversationReply(conversationId)
+      if (selectedIdRef.current === conversationId) setReply(result.suggestion)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Não foi possível preparar um rascunho.')
     } finally {
