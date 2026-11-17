@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   contactLabel,
   contactSecondaryLabel,
+  composerSubmitIntent,
   groupMessagesByDay,
   messageStatusMeta,
 } from '../../src/features/workspace/inboxPresentation'
@@ -66,4 +67,11 @@ test('agrupamento preserva ordem e cria um divisor por dia', () => {
 test('status de mensagem tem rótulo acessível e fallback seguro', () => {
   assert.deepEqual(messageStatusMeta('read'), { label: 'Lida', icon: 'read' })
   assert.deepEqual(messageStatusMeta('unknown-provider-state'), { label: 'Status indisponível', icon: 'unknown' })
+})
+
+test('Enter envia e Shift Enter preserva quebra de linha', () => {
+  assert.equal(composerSubmitIntent({ key: 'Enter', shiftKey: false, isComposing: false }), true)
+  assert.equal(composerSubmitIntent({ key: 'Enter', shiftKey: true, isComposing: false }), false)
+  assert.equal(composerSubmitIntent({ key: 'Enter', shiftKey: false, isComposing: true }), false)
+  assert.equal(composerSubmitIntent({ key: 'a', shiftKey: false, isComposing: false }), false)
 })

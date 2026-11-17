@@ -52,3 +52,7 @@ export function messageStatusMeta(status: string): { label: string; icon: Messag
   }
   return states[status] ?? { label: 'Status indisponível', icon: 'unknown' }
 }
+
+export function composerSubmitIntent(event: { key: string; shiftKey: boolean; isComposing: boolean }) {
+  return event.key === 'Enter' && !event.shiftKey && !event.isComposing
+}

@@ -17,7 +17,7 @@ import { ImportContactsSheet } from '../../components/contacts/ImportContactsShe
 import CreateLeadModal from '../../components/modals/CreateLeadModal'
 import ContactDetailDrawer from '../../components/drawers/ContactDetailDrawer'
 import LeadDetailDrawer from '../../components/drawers/LeadDetailDrawer'
-import { Archive, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, FileUp, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Trash2, UserRound, X } from 'lucide-react'
+import { AlertCircle, Archive, Check, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, FileUp, LoaderCircle, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Smile, Trash2, UserRound, X } from 'lucide-react'
 import { createGoogleCalendarUrl } from '../../lib/googleCalendar'
 import {
   ApiError,
@@ -58,6 +58,7 @@ import {
   type PipelineStage,
 } from '../../lib/crm'
 import { useRealtime } from '../../lib/realtime'
+import { composerSubmitIntent, contactLabel, contactSecondaryLabel, groupMessagesByDay, messageStatusMeta } from './inboxPresentation'
 
 /**
  * Caixa de entrada.
@@ -319,6 +320,7 @@ function ChatInbox({
   const windowState = describeWindow(selected, now)
   const hasOfficialChannel = hasConnectedWhatsApp(channels)
   const viewAll = !filters.assignedUserId && !filters.unassigned && !filters.status && !filters.slaOverdue && !filters.channelId && !filters.search
+  const messageGroups = groupMessagesByDay(messages, 'America/Sao_Paulo')
 
   async function handleAssign(userId: string) {
     if (!selected) return
@@ -448,7 +450,7 @@ function ChatInbox({
       <div className={conversationId ? 'hidden expanded:block' : ''}>
         <Topbar title="Caixa de entrada" tab={`${total} conversa(s)${unreadTotal > 0 ? ` · ${unreadTotal} não lida(s)` : ''}`} />
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 expanded:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 expanded:grid-cols-[340px_minmax(0,1fr)]">
         <aside className={`${conversationId ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white expanded:flex`} aria-label="Conversas">
           <div className="space-y-3 border-b border-slate-200 p-3">
             <div className="flex items-center justify-between gap-3 text-xs">
@@ -457,7 +459,7 @@ function ChatInbox({
                 <span className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 {connected ? 'Ao vivo' : 'Reconectando'}
               </span>
-              {waitingCount > 0 && <span className="font-semibold text-amber-700">{waitingCount} aguardando resposta</span>}
+              {waitingCount > 0 && <button type="button" className="min-h-11 rounded-lg px-2 font-semibold text-amber-800 hover:bg-amber-50" onClick={() => setFilters((current) => ({ ...current, status: 'waiting', page: 1 }))}>{waitingCount} aguardando</button>}
             </div>
             <input
               type="search"
@@ -559,9 +561,7 @@ function ChatInbox({
                         <p className={`truncate ${conversation.unread_count > 0 ? 'font-bold' : 'font-semibold'} text-slate-900`}>{contactLabel(conversation)}</p>
                         <StatusPill status={conversation.status} />
                       </div>
-                      <p className="truncate text-sm text-slate-500">
-                        {conversation.contact_name && conversation.contact_phone ? formatPhoneBR(conversation.contact_phone) : conversation.channel_name ?? 'WhatsApp'}
-                      </p>
+                      <p className="truncate text-sm text-slate-600">{contactSecondaryLabel(conversation)}</p>
                       <p className="mt-0.5 truncate text-xs text-slate-500">
                         {conversation.unassigned ? 'Sem responsável' : conversation.assigned_user_name ?? 'Responsável definido'}
                         {conversation.waiting_seconds > 0 ? ` · aguardando ${formatWait(conversation.waiting_seconds)}` : ''}
@@ -612,9 +612,7 @@ function ChatInbox({
                   </button>
                   <div className="min-w-0 flex-1 px-1">
                     <h2 className="truncate font-semibold text-slate-900">{contactLabel(selected)}</h2>
-                    <p className="truncate text-xs text-slate-500">
-                      {selected.channel_phone ? `Pelo ${formatPhoneBR(selected.channel_phone)}` : selected.channel_name ?? 'WhatsApp'}
-                    </p>
+                    <p className="truncate text-xs text-slate-600">{contactSecondaryLabel(selected)} • {selected.channel_name ?? 'WhatsApp'}</p>
                   </div>
                   {selected.contact_id && (
                     <button type="button" className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50" onClick={() => setSelectedContactId(selected.contact_id)}>
@@ -649,14 +647,24 @@ function ChatInbox({
                 </div>
               </div>
               {feedback}
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 expanded:p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 expanded:p-5">
                 {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-500">Nenhuma mensagem gravada para esta conversa.</p>}
-                {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
-                ))}
-                <div ref={messagesEnd} />
+                <div className="mx-auto w-full max-w-[860px] space-y-5">
+                  {messageGroups.map((group) => (
+                    <section key={group.key} aria-label={group.label} className="space-y-3">
+                      <div className="flex items-center gap-3" role="separator">
+                        <span className="h-px flex-1 bg-slate-200" />
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200">{group.label}</span>
+                        <span className="h-px flex-1 bg-slate-200" />
+                      </div>
+                      {group.messages.map((message) => <MessageBubble key={message.id} message={message} />)}
+                    </section>
+                  ))}
+                  <div ref={messagesEnd} />
+                </div>
               </div>
               <div className="border-t border-slate-200 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] expanded:p-4">
+                <div className="mx-auto w-full max-w-[860px]">
                 {templateOpen || !windowState.canSendFreeText ? (
                   <TemplateComposer
                     templates={templates}
@@ -670,10 +678,15 @@ function ChatInbox({
                 ) : (
                   <>
                     <textarea
-                      className="input min-h-20 resize-none"
+                      className="input min-h-24 resize-y pr-12"
                       aria-label="Resposta"
                       value={reply}
                       onChange={(event) => setReply(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (!composerSubmitIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: event.nativeEvent.isComposing })) return
+                        event.preventDefault()
+                        if (!sending && reply.trim()) void handleSend()
+                      }}
                       placeholder="Responder pelo WhatsApp…"
                     />
                     <div className="mt-2 flex items-center justify-between gap-2">
@@ -694,6 +707,9 @@ function ChatInbox({
                           <Paperclip size={15} aria-hidden="true" />
                           <span className="max-medium:sr-only">{uploading ? 'Enviando anexo…' : 'Anexar'}</span>
                         </button>
+                        <button type="button" className={actionClass} aria-label="Adicionar emoji" title="Adicionar emoji" onClick={() => setReply((value) => `${value}${value && !value.endsWith(' ') ? ' ' : ''}🙂`)}>
+                          <Smile size={16} aria-hidden="true" />
+                        </button>
                         {officialWindow && (
                           <button type="button" className={actionClass} onClick={loadTemplates}>
                             <FileText size={15} aria-hidden="true" />
@@ -706,8 +722,10 @@ function ChatInbox({
                         {sending ? 'Enviando…' : 'Enviar'}
                       </button>
                     </div>
+                    <p className="mt-2 text-xs text-slate-500">Enter envia • Shift + Enter cria uma nova linha</p>
                   </>
                 )}
+                </div>
               </div>
             </div>
           )}
@@ -727,10 +745,6 @@ function ChatInbox({
 
 /** Canais em que vale a janela de 24h da Meta — o mesmo que o backend aplica. */
 const PROVIDERS_WITH_WINDOW = ['whatsapp', 'messageria']
-
-function contactLabel(conversation: CrmConversation) {
-  return conversation.contact_name || formatPhoneBR(conversation.contact_phone) || 'Contato sem nome'
-}
 
 /**
  * Traduz a janela de 24h para o que a tela precisa decidir.
@@ -771,18 +785,9 @@ function describeWindow(conversation: CrmConversation | null, now: number) {
   }
 }
 
-/** O status gravado é o da plataforma (sent, delivered...); a bolha fala português. */
-const messageStatusLabels: Record<string, string> = {
-  sent: 'enviada',
-  delivered: 'entregue',
-  read: 'lida',
-  failed: 'falhou',
-  pending: 'enviando',
-  queued: 'na fila',
-}
-
 function MessageBubble({ message }: { message: CrmMessage }) {
   const inbound = message.direction === 'inbound'
+  const status = messageStatusMeta(message.status)
   // Mensagem com anexo entra no banco com o marcador "[image]" vindo do
   // webhook; ao lado da imagem ele nao informa nada. A legenda real do cliente
   // vive no anexo.
@@ -790,17 +795,26 @@ function MessageBubble({ message }: { message: CrmMessage }) {
   const texto = message.media_id && marcador ? message.media_caption ?? '' : message.body ?? ''
   return (
     <div className={`flex ${inbound ? 'justify-start' : 'justify-end'}`}>
-      <div className={`max-w-[72%] rounded px-4 py-3 text-sm shadow-sm ${inbound ? 'bg-white' : 'bg-blue-600 text-white'}`}>
+      <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm shadow-sm expanded:max-w-[76%] ${inbound ? 'rounded-bl-md bg-white text-slate-900 ring-1 ring-slate-200' : 'rounded-br-md bg-blue-600 text-white'}`}>
         {message.media_id && <MessageAttachment message={message} />}
         {texto && <p className={message.media_id ? 'mt-2 whitespace-pre-wrap' : 'whitespace-pre-wrap'}>{texto}</p>}
         {!texto && !message.media_id && <p className="italic opacity-70">[sem conteúdo]</p>}
-        <p className={`mt-2 text-xs ${inbound ? 'text-slate-400' : 'text-blue-100'}`}>
-          {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.message_type === 'template' ? 'modelo · ' : ''}{messageStatusLabels[message.status] ?? message.status}
+        <p className={`mt-2 flex items-center justify-end gap-1 text-xs ${inbound ? 'text-slate-500' : 'text-blue-100'}`}>
+          <span>{new Date(message.sent_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}{message.message_type === 'template' ? ' • modelo' : ''}</span>
+          {!inbound && <MessageStatusIcon status={status.icon} />}
+          {!inbound && <span className="sr-only">{status.label}</span>}
         </p>
         {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
       </div>
     </div>
   )
+}
+
+function MessageStatusIcon({ status }: { status: ReturnType<typeof messageStatusMeta>['icon'] }) {
+  if (status === 'pending') return <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+  if (status === 'sent') return <Check size={13} aria-hidden="true" />
+  if (status === 'delivered' || status === 'read') return <CheckCheck size={13} className={status === 'read' ? 'text-cyan-200' : undefined} aria-hidden="true" />
+  return <AlertCircle size={13} aria-hidden="true" />
 }
 
 /** Renderiza o anexo pelo mime: imagem, áudio e vídeo abrem no lugar. */

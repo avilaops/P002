@@ -43,8 +43,8 @@ export function EvolutionSyncStatus({ enabled = true }: { enabled?: boolean }) {
             ? `Sincronizando histórico • ${sync.imported.toLocaleString('pt-BR')} mensagens importadas`
             : sync.total === 0 ? 'O WhatsApp ainda não disponibilizou histórico. Novas mensagens serão sincronizadas automaticamente.'
               : `Sincronização automática ativa • ${sync.imported.toLocaleString('pt-BR')} mensagens importadas`
-  return <div role="status" aria-live="polite" className={`px-4 py-3 text-xs leading-5 ${error ? 'bg-amber-50 text-amber-900' : 'bg-slate-50 text-slate-600'}`}>
-    <p>{text}</p>
-    {sync?.lastSuccessAt && <p className="mt-1">Última sincronização • {new Date(sync.lastSuccessAt).toLocaleString('pt-BR')}</p>}
-  </div>
+  return <details className={`border-b px-4 py-2 text-xs ${error ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+    <summary className="min-h-8 cursor-pointer content-center font-medium" role="status" aria-live="polite">{text}</summary>
+    {sync?.lastSuccessAt && <p className="pb-1 pt-2 text-slate-600">Última sincronização • {new Date(sync.lastSuccessAt).toLocaleString('pt-BR')}</p>}
+  </details>
 }
