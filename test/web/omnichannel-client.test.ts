@@ -8,6 +8,6 @@ test('clientes omnichannel tratam respostas antigas ou incompletas como desconec
   t.after(() => { globalThis.fetch = originalFetch })
   globalThis.fetch = async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
 
-  assert.deepEqual(await getMetaMessagingStatus(), { connected: false, account: null, channels: [] })
+  assert.deepEqual(await getMetaMessagingStatus(), { connected: false, account: null, channels: [], connectUrl: 'https://auth.avilaops.com/conta/meta' })
   assert.deepEqual(await getWebChatChannel(), { channel: null, embedCode: null })
 })

@@ -70,6 +70,26 @@
       "ambiente": "produção corrigida para a conta existente; automação aguardando publicação"
     },
     {
+      "id": "META-OAUTH-001",
+      "title": "Conectar Instagram e Messenger por OAuth",
+      "status": "em-revisao",
+      "responsavel": null,
+      "objetivo": "Permitir que um administrador autorize os ativos da Meta para sua empresa sem digitar tokens ou segredos no CRM.",
+      "criteriosAceite": [
+        "OAuth exige a mesma identidade do SSO e permissão de gestão no tenant",
+        "Página escolhida não pode ser usada por outra empresa",
+        "Webhook da Página é inscrito automaticamente antes de persistir o canal",
+        "Segredo global permanece apenas no servidor",
+        "Tipos, lint, testes, build e produção verificados"
+      ],
+      "evidencias": [
+        "backend/test/omnichannel.test.mjs",
+        "test/web/omnichannel-client.test.ts",
+        "10 testes omnichannel, 79 testes web, tipos, lint e build aprovados"
+      ],
+      "ambiente": "permissões do conector Auth e segredo do CRM configurados em produção; código aguardando publicação"
+    },
+    {
       "id": "WHATSAPP-R2-001",
       "title": "Migrar mídias do WhatsApp para Cloudflare R2",
       "status": "concluido",

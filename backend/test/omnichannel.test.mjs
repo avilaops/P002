@@ -67,23 +67,35 @@ test('configuração social exige gestão e nunca devolve credenciais', async (t
     decryptSecret: (value) => value,
     recordEvent: async () => {},
     publish: () => {},
-    fetch: async () => new Response(JSON.stringify({ id: 'page-1', name: 'Página verificada' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    emailDoSso: async () => 'a@example.test',
+    getMetaConnection: async () => ({ conta: { id: 'a', email: 'a@example.test' }, meta: { usuarioId: 'meta-a', nome: 'Conta A', escopos: ['pages_messaging', 'pages_manage_metadata', 'instagram_manage_messages'], expiraEm: null }, token: 'user-token', ativos: [
+      { tipo: 'pagina', externoId: 'page-1', nome: 'Página verificada', detalhe: {}, token: 'page-token-secret' },
+      { tipo: 'instagram', externoId: 'ig-1', nome: '@pagina', detalhe: { paginaId: 'page-1' }, token: null },
+    ] }),
+    fetch: async (url, init) => {
+      assert.equal(init.method, 'POST')
+      assert.match(String(url), /page-1\/subscribed_apps/)
+      assert.doesNotMatch(String(url), /page-token-secret/)
+      assert.equal(init.body.get('subscribed_fields'), 'messages,messaging_postbacks')
+      assert.equal(init.body.get('access_token'), 'page-token-secret')
+      return new Response(JSON.stringify({ success: true }), { status: 200 })
+    },
     query: async (sql, params = []) => { calls.push({ sql, params }); return { rows: [], rowCount: 0 } },
   })
   t.after(() => app.close())
 
-  const input = { pageId: 'page-1', pageName: 'Página', accessToken: 'access-token-secret', appSecret: 'app-secret', verifyToken: 'verify-token-long' }
-  const response = await app.inject({ method: 'PUT', url: '/api/channels/meta-messaging', payload: input })
+  const response = await app.inject({ method: 'POST', url: '/api/channels/meta-messaging/oauth/sync', payload: { pageId: 'page-1' } })
   assert.equal(response.statusCode, 200, response.body)
-  assert.doesNotMatch(response.body, /access-token-secret|app-secret|verify-token-long/)
+  assert.doesNotMatch(response.body, /page-token-secret|user-token/)
   const serialized = JSON.stringify(calls)
   assert.match(serialized, /enc\(/)
-  assert.doesNotMatch(serialized, /"access-token-secret"(?!\))/)
+  assert.doesNotMatch(serialized, /"page-token-secret"(?!\))/)
   assert.ok(calls.every((call) => !call.params.includes('tenant-b')))
 })
 
-test('configuração social recusa token de outra Página antes de gravar', async (t) => {
+test('configuração social exige que a conta SSO seja a conta do usuário', async (t) => {
   const writes = []
+  let readConnection = false
   const app = Fastify()
   registerOmnichannelRoutes(app, {
     requireAuth: async () => ({ id: 'user-a', tenant_id: 'tenant-a', name: 'A', email: 'a@example.test', role: 'admin' }),
@@ -92,13 +104,16 @@ test('configuração social recusa token de outra Página antes de gravar', asyn
     decryptSecret: value => value,
     recordEvent: async () => {},
     publish: () => {},
-    fetch: async () => new Response(JSON.stringify({ id: 'page-de-outra-empresa', name: 'Outra' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    emailDoSso: async () => 'outra@example.test',
+    getMetaConnection: async () => { readConnection = true; throw new Error('não deveria consultar') },
+    metaConnectUrl: () => 'https://auth.example.test/conta/meta',
     query: async (sql, params = []) => { writes.push({ sql, params }); return { rows: [], rowCount: 0 } },
   })
   t.after(() => app.close())
 
-  const response = await app.inject({ method: 'PUT', url: '/api/channels/meta-messaging', payload: { pageId: 'page-1', pageName: 'Página', accessToken: 'access-token-secret', appSecret: 'app-secret', verifyToken: 'verify-token-long' } })
-  assert.equal(response.statusCode, 400, response.body)
+  const response = await app.inject({ method: 'POST', url: '/api/channels/meta-messaging/oauth/sync', payload: { pageId: 'page-1' } })
+  assert.equal(response.statusCode, 409, response.body)
+  assert.equal(readConnection, false)
   assert.equal(writes.length, 0)
 })
 
@@ -111,13 +126,36 @@ test('configuração social não toma um canal ativo de outra empresa', async (t
     decryptSecret: value => value,
     recordEvent: async () => {},
     publish: () => {},
-    fetch: async () => new Response(JSON.stringify({ id: 'page-1', name: 'Página' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    emailDoSso: async () => 'a@example.test',
+    getMetaConnection: async () => ({ conta: { id: 'a', email: 'a@example.test' }, meta: { usuarioId: 'meta-a', nome: 'Conta A', escopos: ['pages_messaging', 'pages_manage_metadata'], expiraEm: null }, token: 'user-token', ativos: [{ tipo: 'pagina', externoId: 'page-1', nome: 'Página', detalhe: {}, token: 'page-token' }] }),
     query: async sql => sql.includes('union all') ? { rows: [{ tenant_id: 'tenant-b' }], rowCount: 1 } : { rows: [], rowCount: 0 },
   })
   t.after(() => app.close())
 
-  const response = await app.inject({ method: 'PUT', url: '/api/channels/meta-messaging', payload: { pageId: 'page-1', pageName: 'Página', accessToken: 'access-token-secret', appSecret: 'app-secret', verifyToken: 'verify-token-long' } })
+  const response = await app.inject({ method: 'POST', url: '/api/channels/meta-messaging/oauth/sync', payload: { pageId: 'page-1' } })
   assert.equal(response.statusCode, 409, response.body)
+})
+
+test('configuração social não persiste o canal quando a Meta rejeita a inscrição do webhook', async (t) => {
+  const writes = []
+  const app = Fastify()
+  registerOmnichannelRoutes(app, {
+    requireAuth: async () => ({ id: 'user-a', tenant_id: 'tenant-a', name: 'A', email: 'a@example.test', role: 'admin' }),
+    canManage: () => true,
+    encryptSecret: value => value,
+    decryptSecret: value => value,
+    recordEvent: async () => {},
+    publish: () => {},
+    emailDoSso: async () => 'a@example.test',
+    getMetaConnection: async () => ({ conta: { id: 'a', email: 'a@example.test' }, meta: { usuarioId: 'meta-a', nome: 'Conta A', escopos: ['pages_messaging', 'pages_manage_metadata'], expiraEm: null }, token: 'user-token', ativos: [{ tipo: 'pagina', externoId: 'page-1', nome: 'Página', detalhe: {}, token: 'page-token' }] }),
+    fetch: async () => new Response(JSON.stringify({ error: { message: 'permission denied' } }), { status: 403 }),
+    query: async (sql, params = []) => { writes.push({ sql, params }); return { rows: [], rowCount: 0 } },
+  })
+  t.after(() => app.close())
+
+  const response = await app.inject({ method: 'POST', url: '/api/channels/meta-messaging/oauth/sync', payload: { pageId: 'page-1' } })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.equal(writes.some((call) => /insert into (integrations|channels)/.test(call.sql)), false)
 })
 
 test('sessão pública do chat respeita origem e persiste somente hash do token', async (t) => {
@@ -131,6 +169,7 @@ test('sessão pública do chat respeita origem e persiste somente hash do token'
     decryptSecret: value => value,
     recordEvent: async () => {},
     publish: () => {},
+    emailDoSso: async () => null,
     query: async (sql, params = []) => {
       calls.push({ sql, params })
       if (sql.includes("provider = 'webchat'")) return { rows: [channel], rowCount: 1 }
@@ -169,6 +208,7 @@ test('widget usa a origem pública HTTPS e não duplica mensagens persistidas', 
     decryptSecret: value => value,
     recordEvent: async () => {},
     publish: () => {},
+    emailDoSso: async () => null,
     query: async () => ({ rows: [channel], rowCount: 1 }),
   })
   t.after(() => {
@@ -195,6 +235,7 @@ test('mensagem do chat publica a entrada e depois reconcilia o estado persistido
     decryptSecret: value => value,
     recordEvent: async () => {},
     publish: event => events.push(event),
+    emailDoSso: async () => null,
     query: async (sql) => {
       if (sql.includes("from channels where provider = 'webchat'")) return { rows: [channel], rowCount: 1 }
       if (sql.includes('from webchat_sessions')) return { rows: [{ id: 'session-a', tenant_id: 'tenant-a', channel_id: 'channel-a', contact_id: 'contact-a', conversation_id: 'conversation-a', origin: 'https://site.example' }], rowCount: 1 }

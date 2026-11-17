@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { query as databaseQuery } from './db.js'
+import { AuthMetaError, buscarConexaoMeta, paginaDaMeta, type ConexaoMetaDoAuth } from './auth-meta.js'
 import type { RealtimeEvent } from './realtime.js'
 import {
   allowedWidgetOrigin,
@@ -22,22 +23,18 @@ type Dependencies = {
   decryptSecret: (value: string | null) => string | null
   recordEvent: (tenantId: string, entityType: string, eventType: string, payload: Record<string, unknown>, actorUserId?: string | null, entityId?: string | null, requestId?: string | null) => Promise<void>
   publish: (event: RealtimeEvent) => void
+  emailDoSso: (request: FastifyRequest) => Promise<string | null>
+  getMetaConnection?: (email: string) => Promise<ConexaoMetaDoAuth>
+  metaConnectUrl?: () => string
   query?: Query
   fetch?: typeof fetch
 }
 
 type SocialChannel = { id: string; tenant_id: string; provider: 'instagram' | 'messenger'; external_id: string }
-type MetaAccount = { id?: string; name?: string; instagram_business_account?: { id?: string; name?: string; username?: string } }
 
-const metaConfigSchema = z.object({
-  pageId: z.string().trim().min(2).max(100),
-  pageName: z.string().trim().min(1).max(160),
-  instagramId: z.string().trim().max(100).optional().default(''),
-  instagramName: z.string().trim().max(160).optional().default(''),
-  accessToken: z.string().trim().min(10).max(2000),
-  appSecret: z.string().trim().min(8).max(500),
-  verifyToken: z.string().trim().min(16).max(500),
-})
+const metaSyncSchema = z.object({ pageId: z.string().trim().min(2).max(100).optional() })
+const META_GRAPH_VERSION = 'v23.0'
+const META_PAGE_WEBHOOK_FIELDS = 'messages,messaging_postbacks'
 
 const webchatConfigSchema = z.object({
   name: z.string().trim().min(1).max(160).default('Chat do site'),
@@ -46,21 +43,20 @@ const webchatConfigSchema = z.object({
   welcomeMessage: z.string().trim().max(500).default('Olá! Como podemos ajudar?'),
 })
 
-function parseSecrets(value: string | null) {
-  if (!value) return null
-  try {
-    const parsed = JSON.parse(value) as unknown
-    const result = z.object({ appSecret: z.string(), verifyToken: z.string() }).safeParse(parsed)
-    return result.success ? result.data : null
-  } catch {
-    return null
-  }
-}
-
 function safeEqual(left: string, right: string) {
   const a = Buffer.from(left)
   const b = Buffer.from(right)
   return a.length === b.length && timingSafeEqual(a, b)
+}
+
+async function subscribeMetaPage(fetcher: typeof fetch, pageId: string, pageToken: string) {
+  const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(pageId)}/subscribed_apps`)
+  const body = new URLSearchParams({ subscribed_fields: META_PAGE_WEBHOOK_FIELDS, access_token: pageToken })
+  const response = await fetcher(url, { method: 'POST', body })
+  const result = await response.json().catch(() => ({})) as { success?: boolean; error?: { message?: string } }
+  if (!response.ok || result.success !== true) {
+    throw new Error(result.error?.message || `Graph HTTP ${response.status}`)
+  }
 }
 
 async function resolveExternalConversation(
@@ -125,20 +121,6 @@ async function ingestExternalMessage(query: Query, channel: SocialChannel, event
     [channel.tenant_id, identity.conversationId, event.sentAt],
   )
   return { conversationId: identity.conversationId, conversation: conversation.rows[0], message: inserted.rows[0] }
-}
-
-async function verifyMetaAccount(fetcher: typeof fetch, input: z.infer<typeof metaConfigSchema>) {
-  const response = await fetcher('https://graph.facebook.com/v23.0/me?fields=id,name,instagram_business_account{id,name,username}', {
-    headers: { Authorization: `Bearer ${input.accessToken}` },
-    signal: AbortSignal.timeout(15_000),
-  })
-  const account = await response.json().catch(() => null) as (MetaAccount & { error?: { message?: string } }) | null
-  if (!response.ok || !account?.id) throw new Error(account?.error?.message || 'A Meta não confirmou a conta informada.')
-  if (account.id !== input.pageId) throw new Error('O token não pertence à Página informada.')
-  if (input.instagramId && account.instagram_business_account?.id !== input.instagramId) {
-    throw new Error('A conta do Instagram não pertence à Página informada.')
-  }
-  return account
 }
 
 async function readWidgetChannel(query: Query, widgetKey: string) {
@@ -206,54 +188,76 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
          from channels where tenant_id = $1 and provider in ('instagram', 'messenger') order by provider`,
       [user.tenant_id],
     )
-    return { connected: Boolean(integration.rows[0]?.connected_at), account: integration.rows[0]?.user_name ?? null, channels: channels.rows }
+    return { connected: Boolean(integration.rows[0]?.connected_at), account: integration.rows[0]?.user_name ?? null, channels: channels.rows, connectUrl: (deps.metaConnectUrl ?? paginaDaMeta)() }
   })
 
-  app.put('/api/channels/meta-messaging', async (request, reply) => {
+  app.post('/api/channels/meta-messaging/oauth/sync', async (request, reply) => {
     const user = await deps.requireAuth(request, reply)
     if (!user) return
     if (!deps.canManage(user)) return reply.code(403).send({ error: 'Permissão insuficiente.' })
-    const input = metaConfigSchema.parse(request.body)
-    let account: MetaAccount
+    const input = metaSyncSchema.parse(request.body ?? {})
+    const email = (await deps.emailDoSso(request))?.trim().toLowerCase()
+    if (!email || email !== user.email.trim().toLowerCase()) {
+      return reply.code(409).send({ error: 'Entre pela Conta Avila Ops para vincular a Meta.', code: 'sso_obrigatorio', connectUrl: (deps.metaConnectUrl ?? paginaDaMeta)() })
+    }
+    let connection: ConexaoMetaDoAuth
     try {
-      account = await verifyMetaAccount(fetcher, input)
+      connection = await (deps.getMetaConnection ?? buscarConexaoMeta)(email)
     } catch (caught) {
-      return reply.code(400).send({ error: caught instanceof Error ? caught.message : 'Credenciais inválidas.' })
+      if (caught instanceof AuthMetaError) {
+        return reply.code(caught.status).send({ error: caught.message, code: caught.codigo, connectUrl: (deps.metaConnectUrl ?? paginaDaMeta)() })
+      }
+      throw caught
+    }
+    const pages = connection.ativos.filter((asset) => asset.tipo === 'pagina' && asset.token)
+    if (!input.pageId && pages.length !== 1) {
+      return { selectionRequired: true, pages: pages.map((asset) => ({ id: asset.externoId, name: asset.nome })) }
+    }
+    const page = pages.find((asset) => asset.externoId === (input.pageId ?? pages[0]?.externoId))
+    if (!page?.token) return reply.code(400).send({ error: 'Selecione uma Página autorizada pela Conta Avila Ops.' })
+    const missingPageScopes = ['pages_messaging', 'pages_manage_metadata'].filter((scope) => !connection.meta.escopos.includes(scope))
+    if (missingPageScopes.length > 0) {
+      return reply.code(409).send({ error: 'Autorize as permissões de mensagens e webhook das Páginas na Conta Avila Ops.', code: 'permissao_paginas', connectUrl: (deps.metaConnectUrl ?? paginaDaMeta)() })
+    }
+    const instagram = connection.ativos.find((asset) => asset.tipo === 'instagram' && asset.detalhe?.paginaId === page.externoId)
+    if (instagram && !connection.meta.escopos.includes('instagram_manage_messages')) {
+      return reply.code(409).send({ error: 'Autorize a permissão de mensagens do Instagram na Conta Avila Ops.', code: 'permissao_instagram', connectUrl: (deps.metaConnectUrl ?? paginaDaMeta)() })
     }
     const occupied = await query<{ tenant_id: string }>(
       `select tenant_id from channels where provider = 'messenger' and external_id = $1 and status = 'connected'
        union all select tenant_id from channels where provider = 'instagram' and external_id = $2 and status = 'connected'`,
-      [input.pageId, input.instagramId || null],
+      [page.externoId, instagram?.externoId ?? null],
     )
     if (occupied.rows.some((row) => row.tenant_id !== user.tenant_id)) {
       return reply.code(409).send({ error: 'Esta conta Meta já está vinculada a outra empresa.' })
     }
-    const pageName = account.name?.trim() || input.pageName
-    const instagramName = account.instagram_business_account?.username?.trim()
-      || account.instagram_business_account?.name?.trim()
-      || input.instagramName
-    const encryptedSecrets = deps.encryptSecret(JSON.stringify({ appSecret: input.appSecret, verifyToken: input.verifyToken }))
-    const encryptedToken = deps.encryptSecret(input.accessToken)
+    try {
+      await subscribeMetaPage(fetcher, page.externoId, page.token)
+    } catch (caught) {
+      request.log.warn({ err: caught, pageId: page.externoId }, 'Falha ao inscrever a Página no webhook da Meta')
+      return reply.code(502).send({ error: 'A Meta não permitiu ativar o webhook desta Página. Revise as permissões e autorize novamente.', code: 'meta_webhook' })
+    }
+    const encryptedToken = deps.encryptSecret(page.token)
     await query(
-      `insert into integrations (tenant_id, provider, app_id, app_secret, access_token, user_name, metadata, connected_at, updated_at)
-       values ($1, 'meta_messaging', $2, $3, $4, $5, $6::jsonb, now(), now())
-       on conflict (tenant_id, provider) do update set app_id = excluded.app_id, app_secret = excluded.app_secret,
-         access_token = excluded.access_token, user_name = excluded.user_name, metadata = excluded.metadata,
+      `insert into integrations (tenant_id, provider, app_id, access_token, user_name, metadata, connected_at, updated_at)
+       values ($1, 'meta_messaging', $2, $3, $4, $5::jsonb, now(), now())
+       on conflict (tenant_id, provider) do update set app_id = excluded.app_id,
+         app_secret = null, access_token = excluded.access_token, user_name = excluded.user_name, metadata = excluded.metadata,
          connected_at = now(), updated_at = now()`,
-      [user.tenant_id, input.pageId, encryptedSecrets, encryptedToken, pageName, JSON.stringify({ instagramId: input.instagramId || null, instagramName: instagramName || null })],
+      [user.tenant_id, page.externoId, encryptedToken, connection.meta.nome ?? email, JSON.stringify({ origem: 'auth', auth_email: email, page_name: page.nome, instagram_id: instagram?.externoId ?? null })],
     )
     await query(
       `insert into channels (tenant_id, provider, external_id, display_name, status, metadata, updated_at)
        values ($1, 'messenger', $2, $3, 'connected', '{}'::jsonb, now())
        on conflict (tenant_id, provider, external_id) do update set display_name = excluded.display_name, status = 'connected', error_message = null, updated_at = now()`,
-      [user.tenant_id, input.pageId, pageName],
+      [user.tenant_id, page.externoId, page.nome],
     )
-    if (input.instagramId) {
+    if (instagram) {
       await query(
         `insert into channels (tenant_id, provider, external_id, display_name, status, metadata, updated_at)
          values ($1, 'instagram', $2, $3, 'connected', '{}'::jsonb, now())
          on conflict (tenant_id, provider, external_id) do update set display_name = excluded.display_name, status = 'connected', error_message = null, updated_at = now()`,
-        [user.tenant_id, input.instagramId, instagramName || pageName],
+        [user.tenant_id, instagram.externoId, instagram.nome],
       )
     }
     await query(
@@ -261,10 +265,10 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
         where tenant_id = $1 and provider in ('instagram', 'messenger')
           and ((provider = 'messenger' and external_id <> $2)
             or (provider = 'instagram' and ($3::text is null or external_id <> $3)))`,
-      [user.tenant_id, input.pageId, input.instagramId || null],
+      [user.tenant_id, page.externoId, instagram?.externoId ?? null],
     )
-    await deps.recordEvent(user.tenant_id, 'integration', 'meta_messaging.connected', { page_id: input.pageId, instagram: Boolean(input.instagramId) }, user.id)
-    return { connected: true }
+    await deps.recordEvent(user.tenant_id, 'integration', 'meta_messaging.connected_oauth', { page_id: page.externoId, instagram: Boolean(instagram), auth_email: email }, user.id)
+    return { connected: true, page: { id: page.externoId, name: page.nome }, instagram: instagram ? { id: instagram.externoId, name: instagram.nome } : null }
   })
 
   app.delete('/api/channels/meta-messaging', async (request, reply) => {
@@ -280,11 +284,8 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
   app.get('/webhooks/meta/messaging', async (request, reply) => {
     const params = z.object({ 'hub.mode': z.string().optional(), 'hub.verify_token': z.string().optional(), 'hub.challenge': z.string().optional() }).parse(request.query)
     if (params['hub.mode'] !== 'subscribe' || !params['hub.verify_token']) return reply.code(400).send('invalid')
-    const integrations = await query<{ app_secret: string | null }>("select app_secret from integrations where provider = 'meta_messaging' and connected_at is not null")
-    const valid = integrations.rows.some((row) => {
-      const secrets = parseSecrets(deps.decryptSecret(row.app_secret))
-      return Boolean(secrets && safeEqual(secrets.verifyToken, params['hub.verify_token'] ?? ''))
-    })
+    const verifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim() ?? ''
+    const valid = Boolean(verifyToken && safeEqual(verifyToken, params['hub.verify_token'] ?? ''))
     return valid ? reply.type('text/plain').send(params['hub.challenge'] ?? '') : reply.code(403).send('invalid')
   })
 
@@ -301,9 +302,8 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
       )
       if (channels.rows.length !== 1) return reply.code(400).send({ error: 'Canal desconhecido ou ambíguo.' })
       const channel = channels.rows[0]
-      const integration = await query<{ app_secret: string | null }>("select app_secret from integrations where tenant_id = $1 and provider = 'meta_messaging'", [channel.tenant_id])
-      const secrets = parseSecrets(deps.decryptSecret(integration.rows[0]?.app_secret ?? null))
-      if (!secrets || !verifyMetaSignature(rawBody, request.headers['x-hub-signature-256'], secrets.appSecret)) return reply.code(401).send({ error: 'Assinatura inválida.' })
+      const appSecret = process.env.META_MESSAGING_APP_SECRET?.trim() ?? ''
+      if (!appSecret || !verifyMetaSignature(rawBody, request.headers['x-hub-signature-256'], appSecret)) return reply.code(401).send({ error: 'Assinatura inválida.' })
       const saved = await ingestExternalMessage(query, channel, event)
       if (saved) {
         imported += 1
@@ -444,7 +444,7 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
     const integration = await query<{ access_token: string | null }>("select access_token from integrations where tenant_id = $1 and provider = 'meta_messaging' and connected_at is not null", [tenantId])
     const token = deps.decryptSecret(integration.rows[0]?.access_token ?? null)
     if (!token) throw new Error('Meta Messaging não conectada.')
-    const response = await fetcher(`https://graph.facebook.com/v23.0/${channelExternalId}/messages`, {
+    const response = await fetcher(`https://graph.facebook.com/${META_GRAPH_VERSION}/${channelExternalId}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { text: body } }),

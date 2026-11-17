@@ -2549,6 +2549,10 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     decryptSecret,
     recordEvent,
     publish: publishRealtimeAsync,
+    emailDoSso: async (request) => {
+      const token = parseCookies(request.headers.cookie).get(SSO_COOKIE);
+      return (await consultarSessaoSso(token))?.email ?? null;
+    },
   }).sendMetaText;
   registerEvolutionRoutes(app, { requireAuth, canManage, upsertContact: upsertWhatsAppContact, conversation: getOrCreateConversation, publish: publishRealtimeAsync, background: options.background !== false });
   registerAccountRoutes(app, {

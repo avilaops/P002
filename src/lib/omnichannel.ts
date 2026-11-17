@@ -14,6 +14,7 @@ export type MetaMessagingStatus = {
   connected: boolean
   account: string | null
   channels: SocialChannelStatus[]
+  connectUrl: string
 }
 
 function isSocialChannel(value: unknown): value is SocialChannelStatus {
@@ -33,22 +34,19 @@ export async function getMetaMessagingStatus(): Promise<MetaMessagingStatus> {
     connected: result?.connected === true,
     account: typeof result?.account === 'string' ? result.account : null,
     channels,
+    connectUrl: typeof result?.connectUrl === 'string' ? result.connectUrl : 'https://auth.avilaops.com/conta/meta',
   }
 }
 
-export function saveMetaMessaging(input: {
-  pageId: string
-  pageName: string
-  instagramId?: string
-  instagramName?: string
-  accessToken: string
-  appSecret: string
-  verifyToken: string
-}) {
-  return api<{ connected: true }>('/api/channels/meta-messaging', {
-    method: 'PUT',
+export type MetaMessagingSync =
+  | { selectionRequired: true; pages: Array<{ id: string; name: string }> }
+  | { connected: true; page: { id: string; name: string }; instagram: { id: string; name: string } | null }
+
+export function syncMetaMessaging(pageId?: string) {
+  return api<MetaMessagingSync>('/api/channels/meta-messaging/oauth/sync', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify(pageId ? { pageId } : {}),
   })
 }
 
