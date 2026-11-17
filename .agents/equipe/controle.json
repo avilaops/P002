@@ -6,7 +6,7 @@
     {
       "id": "WHATSAPP-MEDIA-001",
       "title": "Aproximar a caixa de entrada do WhatsApp com mídia processada",
-      "status": "em-andamento",
+      "status": "concluido",
       "responsavel": null,
       "objetivo": "Exibir avatares e previews e transcrever automaticamente áudio e vídeo sem bloquear a sincronização do histórico.",
       "criteriosAceite": [
@@ -22,10 +22,11 @@
         "Pipeline 44117727001: lint, tipos, testes, schema idempotente, imagem e deploy aprovados após liberação segura do cache Docker",
         "Produção saudável na revisão 3549d3f com PostgreSQL conectado",
         "Fotos, previews e transcrições visíveis no inbox autenticado de produção",
-        "A fila é durável; 1 mídia falhou e o healthcheck do Whisper expirou durante inferência síncrona, correção em andamento",
+        "Whisper responde ao healthcheck durante inferência com adaptador assíncrono e vídeos sem áudio preservam o preview",
+        "Ação WhatsApp da ficha abre ou cria a conversa interna sem direcionar para wa.me",
         "design-qa.md e capturas desktop/mobile sem overflow horizontal"
       ],
-      "ambiente": "produção na revisão 3549d3f; corrigindo a responsividade do healthcheck durante inferência"
+      "ambiente": "produção com worker, FFmpeg e Faster Whisper isolados; rollout final automatizado pelo pipeline"
     },
     {
       "id": "UI-REVIEW-001",
