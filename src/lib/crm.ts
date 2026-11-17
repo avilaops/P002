@@ -440,10 +440,21 @@ export function deleteContact(contactId: string) {
 export function getContactTimeline(contactId: string) {
   return api<{
     contact: CrmContact
+    duplicates: ContactDuplicate[]
     events: { id: string; entity_type: string; event_type: string; payload: Record<string, unknown>; created_at: string }[]
     tasks: { id: string; title: string; description: string | null; priority: string; due_at: string | null; status: string; created_at: string }[]
     messages: { id: string; direction: string; body: string; sent_at: string; status: string }[]
   }>(`/api/contacts/${contactId}/timeline`)
+}
+
+export type ContactDuplicate = Pick<CrmContact, 'id' | 'name' | 'email' | 'phone'> & { reasons: string[] }
+
+export function mergeContactRecords(targetId: string, sourceId: string) {
+  return api<{ contact: CrmContact }>(`/api/contacts/${targetId}/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceId }),
+  })
 }
 
 export function openContactWhatsApp(contactId: string) {

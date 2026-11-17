@@ -9,6 +9,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { query, transaction } from "./db.js";
+import { duplicateContacts, mergeContact } from "./contact-identity.js";
 import { registerCrmCoreRoutes } from "./routes-crm-core.js";
 import { installErrorHandler, validateTenantReferences } from "./tenant-access.js";
 import { ehMensagemDeAudio, transcreverEGravar } from "./transcricao.js";
@@ -495,33 +496,45 @@ async function gravarCanaisDoAuth(tenantId: string, canais: CanalDescoberto[]) {
 }
 
 async function upsertWhatsAppContact(tenantId: string, waId: string, name: string | undefined) {
-  const result = await query<{ id: string }>(
-    `insert into contacts (tenant_id, name, phone, source, updated_at)
-     values ($1, $2, $3, 'whatsapp', now())
-     on conflict (tenant_id, phone)
-     do update set name = case when $4::text is null then contacts.name else coalesce(nullif(excluded.name, ''), contacts.name) end, source = coalesce(contacts.source, 'whatsapp'), updated_at = now()
-     returning id`,
-    [tenantId, name || waId, waId, name?.trim() || null],
-  );
-  return result.rows[0].id;
+  return transaction(async () => {
+    await query("select pg_advisory_xact_lock(hashtextextended($1 || ':' || coalesce(crm_phone_key($2,'whatsapp'),$2),0))", [tenantId,waId]);
+    const candidates = await query<{ id: string; phone: string }>(
+      `select id,phone from contacts where tenant_id=$1 and (phone=$2 or
+         crm_phone_key(phone,source)=crm_phone_key($2,'whatsapp'))
+       order by (phone=$2) desc,id limit 2 for update`, [tenantId,waId],
+    );
+    const match = candidates.rows[0];
+    if (match && (match.phone === waId || candidates.rows.length === 1)) {
+      await query(`update contacts set
+        name=case when source='whatsapp' and $4::text is not null and $4<>$3 then $4 else name end,
+        phone=case when phone=$3 or source='whatsapp' or $3 !~ '^[0-9]+$' then $3 else '+'||$3 end,
+        updated_at=now() where tenant_id=$1 and id=$2`, [tenantId,match.id,waId,name?.trim() || null]);
+      return match.id;
+    }
+    const result = await query<{ id: string }>(
+      `insert into contacts (tenant_id,name,phone,source) values ($1,$2,$3,'whatsapp')
+       on conflict (tenant_id,phone) do update set updated_at=now() returning id`,
+      [tenantId,name?.trim() || waId,waId],
+    );
+    return result.rows[0].id;
+  });
 }
 
 async function getOrCreateConversation(tenantId: string, channelId: string | null, contactId: string) {
-  const existing = await query<{ id: string }>(
-    `select id from conversations
-     where tenant_id = $1 and contact_id = $2 and channel_id is not distinct from $3 and archived_at is null
-     order by updated_at desc
-     limit 1`,
-    [tenantId, contactId, channelId],
-  );
-  if (existing.rows[0]) return existing.rows[0].id;
-  const created = await query<{ id: string }>(
-    `insert into conversations (tenant_id, channel_id, contact_id, status, created_at, updated_at)
-     values ($1, $2, $3, 'open', now(), now())
-     returning id`,
-    [tenantId, channelId, contactId],
-  );
-  return created.rows[0].id;
+  return transaction(async () => {
+    await query("select pg_advisory_xact_lock(hashtextextended($1,0))", [`thread:${tenantId}:${channelId}:${contactId}`]);
+    const existing = await query<{ id: string }>(
+      `select id from conversations
+       where tenant_id=$1 and contact_id=$2 and channel_id is not distinct from $3 and archived_at is null
+       order by updated_at desc limit 1`, [tenantId, contactId, channelId],
+    );
+    if (existing.rows[0]) return existing.rows[0].id;
+    const created = await query<{ id: string }>(
+      `insert into conversations (tenant_id,channel_id,contact_id,status)
+       values ($1,$2,$3,'open') returning id`, [tenantId,channelId,contactId],
+    );
+    return created.rows[0].id;
+  });
 }
 
 /**
@@ -1744,17 +1757,32 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     return { ok: true };
   });
 
+  app.post("/api/contacts/:id/merge", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Apenas gestores podem unir fichas." });
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const { sourceId } = z.object({ sourceId: z.string().uuid() }).parse(request.body);
+    const contact = await transaction(async () => {
+      const saved = await mergeContact(user.tenant_id, id, sourceId);
+      await recordEvent(user.tenant_id, "contact", "contact.merged", { original_id: sourceId }, user.id, id, request.id);
+      return saved;
+    });
+    return { contact };
+  });
+
   app.get("/api/contacts/:id/timeline", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
 
-    const [contactRes, eventsRes, tasksRes, messagesRes] = await Promise.all([
+    const [contactRes, eventsRes, tasksRes, messagesRes, duplicates] = await Promise.all([
       query("select * from contacts where tenant_id = $1 and id = $2", [user.tenant_id, id]),
       query(
         `select id, entity_type, event_type, payload, created_at
          from events
-         where tenant_id = $1 and entity_id = $2
+         where tenant_id = $1 and (entity_id = $2 or entity_id in
+           (select original_id from contact_merges where tenant_id=$1 and contact_id=$2))
          order by created_at desc limit 50`,
         [user.tenant_id, id],
       ),
@@ -1773,12 +1801,14 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
          order by m.sent_at desc limit 50`,
         [user.tenant_id, id],
       ),
+      canManage(user) ? duplicateContacts(user.tenant_id, id) : [],
     ]);
 
     if (!contactRes.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
 
     return {
       contact: contactRes.rows[0],
+      duplicates,
       events: eventsRes.rows,
       tasks: tasksRes.rows,
       messages: messagesRes.rows,

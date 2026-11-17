@@ -274,7 +274,7 @@ export function ImportContactsSheet({ open, onClose, onImported }: { open: boole
                 ['Novos', totals.novos],
                 ['Já estão na base', totals.jaExistem],
                 ['Repetidos no arquivo', totals.repetidosNoArquivo],
-                ['Sem telefone ou e-mail válido', totals.invalidos],
+                ['Linhas para revisar', totals.invalidos],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-slate-200 p-3">
                   <dt className="text-xs text-slate-500">{label}</dt>
@@ -282,6 +282,14 @@ export function ImportContactsSheet({ open, onClose, onImported }: { open: boole
                 </div>
               ))}
             </dl>
+            {preview?.rejected?.length ? (
+              <details className="text-sm">
+                <summary className="cursor-pointer font-medium">Ver linhas para revisar</summary>
+                <ul className="mt-2 max-h-40 overflow-auto">
+                  {preview.rejected.map(item => <li key={item.line}>Linha {item.line} • {item.reason}</li>)}
+                </ul>
+              </details>
+            ) : null}
 
             <fieldset className="space-y-2">
               <legend className="font-semibold text-slate-900">Por que você pode falar com essas pessoas?</legend>
@@ -328,7 +336,7 @@ export function ImportContactsSheet({ open, onClose, onImported }: { open: boole
           <>
             <Notice tone="success">
               {result.summary.created} criado(s), {result.summary.updated} completado(s), {result.summary.kept + result.summary.skipped} sem alteração,{' '}
-              {result.summary.invalid} fora por telefone ou e-mail inválido.
+              {result.summary.invalid} linha(s) para revisar.
             </Notice>
             {result.rejected.length > 0 && (
               <button type="button" className={buttonClass.secondary} onClick={() => download('contatos-nao-importados.csv', rejectionsToCsv(result.rejected))}>

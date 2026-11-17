@@ -42,7 +42,7 @@ const semAcento = (valor: string) => valor.normalize("NFD").replace(/[̀-ͯ]/g, 
 export function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const texto = raw.trim();
-  if (!texto) return null;
+  if (!/^\+?[\d\s().-]+$/.test(texto)) return null;
   const internacional = texto.startsWith("+") || texto.startsWith("00");
   let digitos = texto.replace(/\D/g, "");
   if (texto.startsWith("00")) digitos = digitos.slice(2);
@@ -235,7 +235,12 @@ export function buildEntries(file: ParsedFile, mapping: ImportMapping): { entrie
 
     const tags = splitTags(campo("tags"));
     const chaves = [phone ? `t:${phone}` : null, email ? `e:${email}` : null].filter((chave): chave is string => Boolean(chave));
-    const repetido = chaves.map((chave) => porChave.get(chave)).find(Boolean);
+    const matches = new Set(chaves.map((chave) => porChave.get(chave)).filter((item) => item !== undefined));
+    const [repetido] = matches;
+    if (matches.size > 1 || (repetido && conflictingIdentity(repetido, { phone, email }))) {
+      rejected.push({ line, reason: "Telefone e e-mail correspondem a identidades diferentes no arquivo", raw });
+      return;
+    }
     if (repetido) {
       repeatedInFile += 1;
       repetido.tags = [...new Set([...repetido.tags, ...tags])].slice(0, 10);
@@ -263,3 +268,50 @@ export function buildEntries(file: ParsedFile, mapping: ImportMapping): { entrie
 
 export const LEGAL_BASES = ["contrato", "consentimento", "legitimo_interesse"] as const;
 export type LegalBasis = (typeof LEGAL_BASES)[number];
+
+type Identity = Pick<ImportEntry, "phone" | "email">;
+type ExistingContact = Identity & { id: string };
+
+function conflictingIdentity(left: Identity, right: Identity) {
+  return Boolean((left.phone && right.phone && left.phone !== right.phone)
+    || (left.email && right.email && left.email !== right.email));
+}
+
+/** null in the index means multiple contacts own the same key. */
+export function classifyImport(entries: ImportEntry[], contacts: ExistingContact[]) {
+  const index = new Map<string, ExistingContact | null>();
+  for (const contact of contacts) {
+    const normalized = { id: contact.id, phone: normalizePhone(contact.phone), email: normalizeEmail(contact.email) };
+    for (const key of [normalized.phone, normalized.email]) {
+      if (key) index.set(key, index.has(key) ? null : normalized);
+    }
+  }
+  const created: ImportEntry[] = [];
+  const matched: Array<ImportEntry & { id: string }> = [];
+  const conflicts: ImportRejection[] = [];
+  const byId = new Map<string, ImportEntry & { id: string }>();
+  for (const entry of entries) {
+    const matches = new Set([entry.phone, entry.email].map(key => key ? index.get(key) : undefined)
+      .filter(value => value !== undefined));
+    const [match] = matches;
+    if (!matches.size) {
+      created.push(entry);
+    } else if (matches.size > 1 || !match || conflictingIdentity(match, entry)) {
+      conflicts.push({ line: entry.line, reason: "Identidade ambígua na base • revise as fichas antes de importar", raw: entry.name });
+    } else {
+      // Two complementary rows can match the same existing contact by distinct keys.
+      const previous = byId.get(match.id);
+      if (previous) {
+        previous.tags = [...new Set([...previous.tags, ...entry.tags])];
+        previous.company ??= entry.company;
+        previous.email ??= entry.email;
+        previous.phone ??= entry.phone;
+      } else {
+        const row = { ...entry, id: match.id };
+        byId.set(match.id, row);
+        matched.push(row);
+      }
+    }
+  }
+  return { created, matched, conflicts };
+}

@@ -4,6 +4,26 @@
   "members": [],
   "tasks": [
     {
+      "id": "CONTACT-IDENTITY-001",
+      "title": "Identificar e unir fichas de contato na mesma empresa",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Manter histórico e destinatário corretos ao conciliar contatos entre fontes.",
+      "criteriosAceite": [
+        "Gestor revisa coincidências de telefone, e-mail ou documento e confirma a união",
+        "Operação atômica preserva vínculos, trilha de auditoria e descadastro",
+        "Importação apresenta conflitos antes de aplicar; eventos simultâneos reutilizam o contato",
+        "Conciliação entre ERP, e-mail e mensageria validada; publicação conferida"
+      ],
+      "evidencias": [
+        "backend/contact-identity.ts",
+        "backend/test/contact-import.test.mjs",
+        "backend/test/tenant-integration.test.mjs",
+        "31 verificações aprovadas no conjunto de importação e integração com PostgreSQL descartável, incluindo isolamento e concorrência de eventos",
+        "Navegador local com fichas fictícias: abrir, revisar coincidência, cancelar e confirmar união; duplicata removida da lista"
+      ]
+    },
+    {
       "id": "EVOLUTION-WEBHOOK-001",
       "title": "Receber mensagens da Evolution em tempo real",
       "status": "concluido",
@@ -158,9 +178,10 @@
       ],
       "evidencias": [
         "backend/test/auth-convite.test.mjs",
-        "Vínculo edeeac52-fa3c-49c0-9292-b6b4366cd35b ativo no Contas para Silveira Cruz Engenharia"
+        "Vínculo edeeac52-fa3c-49c0-9292-b6b4366cd35b ativo no Contas para Silveira Cruz Engenharia",
+        "Pipeline 44175741724 passou e /api/health confirmou revisão 019962b com banco conectado"
       ],
-      "ambiente": "criação já provisiona conta e empresa; sincronização de alteração, desativação e remoção validada localmente e aguardando publicação"
+      "ambiente": "produção na revisão 019962b; confirmação do ciclo completo de alteração e revogação com conta de teste no Contas pendente"
     },
     {
       "id": "META-OAUTH-001",

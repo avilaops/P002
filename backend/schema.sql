@@ -251,6 +251,47 @@ create index if not exists inbound_events_pending_idx on inbound_events(tenant_i
 alter table contacts add column if not exists cpf_cnpj text;
 create index if not exists contacts_cpf_cnpj_idx on contacts(tenant_id, cpf_cnpj) where cpf_cnpj is not null;
 
+-- Compare legacy display formats without rewriting provider addresses.
+create or replace function crm_phone_key(raw text, origin text) returns text
+language plpgsql immutable parallel safe as $$
+declare
+  value text := btrim(raw);
+  digits text;
+begin
+  if value is null or value !~ '^\+?[0-9 ().-]+$' then return null; end if;
+  digits := regexp_replace(value, '[^0-9]', '', 'g');
+  if left(value, 2) = '00' then digits := substr(digits, 3); end if;
+  if digits ~ '^55[0-9]{10,11}$' then
+    digits := substr(digits, 3);
+  elsif left(value, 1) = '+' or left(value, 2) = '00' or origin = 'whatsapp' then
+    return case when length(digits) between 8 and 15 then digits end;
+  else
+    digits := ltrim(digits, '0');
+  end if;
+  if digits ~ '^[0-9]{2}[6-9][0-9]{7}$' then
+    digits := left(digits, 2) || '9' || substr(digits, 3);
+  end if;
+  return case when digits ~ '^([0-9]{10}|[0-9]{2}9[0-9]{8})$' then '55' || digits end;
+end $$;
+create index if not exists contacts_phone_identity_idx on contacts(tenant_id, crm_phone_key(phone, source));
+create or replace function crm_document_key(raw text) returns text
+language sql immutable strict parallel safe as $$
+  select case when doc ~ '^([0-9]{11}|[A-Z0-9]{12}[0-9]{2})$' then doc end
+  from (select upper(regexp_replace(raw, '[ ./-]', '', 'g')) as doc) normalized
+$$;
+create index if not exists contacts_document_identity_idx on contacts(tenant_id, crm_document_key(cpf_cnpj));
+create index if not exists contacts_email_identity_idx on contacts(tenant_id, lower(btrim(email)));
+
+create table if not exists contact_merges (
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  original_id uuid not null,
+  contact_id uuid not null references contacts(id) on delete cascade,
+  original_record jsonb not null,
+  merged_at timestamptz not null default now(),
+  primary key (tenant_id, original_id)
+);
+create index if not exists contact_merges_target_idx on contact_merges(tenant_id, contact_id);
+
 -- Fechamento do ciclo: o lead que virou pedido lá aponta para ele aqui.
 alter table leads add column if not exists erp_order_id text;
 alter table leads add column if not exists won_at timestamptz;
@@ -826,6 +867,8 @@ end $$;
 drop trigger if exists crm_tenant_sessions_user_id on sessions;
 create trigger crm_tenant_sessions_user_id before insert or update on sessions for each row execute function crm_check_tenant_link('user_id', 'users');
 drop trigger if exists crm_tenant_contacts_company_id on contacts;
+drop trigger if exists crm_tenant_contact_merges_contact_id on contact_merges;
+create trigger crm_tenant_contact_merges_contact_id before insert or update on contact_merges for each row execute function crm_check_tenant_link('contact_id', 'contacts');
 create trigger crm_tenant_contacts_company_id before insert or update on contacts for each row execute function crm_check_tenant_link('company_id', 'companies');
 drop trigger if exists crm_tenant_contacts_assigned_user_id on contacts;
 create trigger crm_tenant_contacts_assigned_user_id before insert or update on contacts for each row execute function crm_check_tenant_link('assigned_user_id', 'users');

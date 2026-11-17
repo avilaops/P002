@@ -1788,6 +1788,7 @@ function ContactsList() {
           onDeleted={(deletedId) => {
             setContacts((prev) => prev.filter((c) => c.id !== deletedId))
             setSelectedContactId(null)
+            loadContacts()
           }}
         />
       )}

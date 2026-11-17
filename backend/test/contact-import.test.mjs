@@ -1,7 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { buildEntries, guessMapping, normalizeEmail, normalizePhone, parseContactFile, parseCsv, parseVcard, phoneKey } = await import("../../dist-server/contact-import.js");
+const { buildEntries, classifyImport, guessMapping, normalizeEmail, normalizePhone, parseContactFile, parseCsv, parseVcard, phoneKey } = await import("../../dist-server/contact-import.js");
+
+test("não confunde telefone com LID ou endereço de grupo do WhatsApp", () => {
+  for (const phone of ["5516992340000@lid", "5516992340000@g.us", "empresa5516992340000"]) assert.equal(phoneKey(phone), null);
+});
+
+test("prévia e importação rejeitam chaves ambíguas sem escolher a primeira ficha", () => {
+  const file = parseContactFile("contatos.csv", "Nome,Telefone,Email\nA,16992340000,b@example.test\nB,,shared@example.test\nC,16987654321,\nD,,novo@example.test");
+  const { entries } = buildEntries(file, guessMapping(file.columns));
+  const { matched, created, conflicts } = classifyImport(entries, [
+    { id: "a", phone: "+55 16 99234-0000", email: null },
+    { id: "b", phone: null, email: "B@example.test" },
+    { id: "c", phone: "(16) 98765-4321", email: "shared@example.test" },
+    { id: "d", phone: null, email: "Shared@example.test" },
+  ]);
+  assert.deepEqual(conflicts.map(row => row.line), [2, 3]);
+  assert.deepEqual(matched.map(row => row.id), ["c"]);
+  assert.deepEqual(created.map(row => row.name), ["D"]);
+});
+
+test("linha que cruza identidades não altera etiquetas nem chaves das linhas anteriores", () => {
+  const file = parseContactFile("contatos.csv", "Nome,Telefone,Email,Tags\nA,16992340000,,a\nB,,b@example.test,b\nC,16992340000,b@example.test,errada");
+  const { entries, rejected, repeatedInFile } = buildEntries(file, guessMapping(file.columns));
+  assert.deepEqual(rejected.map(row => row.line), [4]);
+  assert.equal(repeatedInFile, 0);
+  assert.deepEqual(entries.map(row => [row.email, row.tags]), [[null, ["a"]], ["b@example.test", ["b"]]]);
+});
 
 test("telefone brasileiro vira E.164 em qualquer formato que a pessoa digita", () => {
   for (const entrada of ["(16) 99234-0000", "16992340000", "016 99234 0000", "+55 16 99234-0000", "5516992340000", "0055 16 99234-0000"]) {

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { query as databaseQuery } from './db.js'
+import { query as databaseQuery, transaction } from './db.js'
 import { AuthMetaError, buscarConexaoMeta, paginaDaMeta, type ConexaoMetaDoAuth } from './auth-meta.js'
 import type { RealtimeEvent } from './realtime.js'
 import {
@@ -304,7 +304,14 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
       const channel = channels.rows[0]
       const appSecret = process.env.META_MESSAGING_APP_SECRET?.trim() ?? ''
       if (!appSecret || !verifyMetaSignature(rawBody, request.headers['x-hub-signature-256'], appSecret)) return reply.code(401).send({ error: 'Assinatura inválida.' })
-      const saved = await ingestExternalMessage(query, channel, event)
+      const saved = await transaction(async () => {
+        // The mapping, contact, thread and message commit as one sender-scoped operation.
+        await query('select pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `social:${channel.tenant_id}:${channel.id}:${event.senderExternalId}`,
+        ])
+        const seen = await query('select 1 from messages where tenant_id=$1 and external_id=$2', [channel.tenant_id,event.externalId])
+        return seen.rowCount ? null : ingestExternalMessage(query, channel, event)
+      })
       if (saved) {
         imported += 1
         deps.publish({ type: 'message.created', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.message })

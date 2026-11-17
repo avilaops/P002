@@ -118,11 +118,13 @@ test('OAuth state cannot write another tenant and Meta status uses session',{ski
   assert.equal((await call('POST','/api/meta/exchange',{code:'fake-code',state:'a'.repeat(32),redirectUri:'https://crm.avilaops.com/oauth-callback.html'})).statusCode,410);
 });
 test('Meta webhook resolves the registered channel before writing',{skip:!enabled},async()=>{
+  const existing=(await ok('POST','/api/contacts',{name:'Nome da agenda',phone:'(11) 99999-1111'},'other',201)).contact;
   await db.query("insert into channels(tenant_id,provider,external_id,display_name,status) values($1,'whatsapp',$2,'B','connected')",[tenantB,`phone-${tenantB}`]);
   const payload={object:'whatsapp_business_account',entry:[{id:'waba-b',changes:[{field:'messages',value:{metadata:{phone_number_id:`phone-${tenantB}`},contacts:[{wa_id:'5511999991111',profile:{name:'Webhook B'}}],messages:[{id:'webhook-fixture',from:'5511999991111',type:'text',text:{body:'Hello'}}]}}]}]};
   const raw=JSON.stringify(payload);const signature='sha256='+createHmac('sha256','testsecret').update(raw).digest('hex');
   const r=await app.inject({method:'POST',url:'/api/meta/webhook',headers:{'content-type':'application/json','x-hub-signature-256':signature},payload:raw});assert.equal(r.statusCode,200,r.body);
-  const result=await db.query("select tenant_id from messages where external_id='webhook-fixture' and tenant_id=$1",[tenantB]);assert.equal(result.rows[0].tenant_id,tenantB);
+  const result=await db.query("select c.contact_id,ct.name from messages m join conversations c on c.id=m.conversation_id join contacts ct on ct.id=c.contact_id where m.external_id='webhook-fixture' and m.tenant_id=$1",[tenantB]);
+  assert.deepEqual(result.rows,[{contact_id:existing.id,name:'Nome da agenda'}]);
   assert.equal((await call('POST','/api/meta/webhook',payload)).statusCode,401);
 });
 test('Meta from auth links only through the SSO session, previews first and stays inside the tenant',{skip:!enabled},async()=>{
@@ -187,6 +189,62 @@ test('contact import previews, dedups by phone and e-mail, records the legal bas
   const history=(await ok('GET','/api/contacts/imports')).imports;assert.equal(history.length,2);assert.equal(history.find(item=>item.id===done.importId).can_undo,false);
   assert.equal((await db.query("select count(*)::int as n from events where tenant_id=$1 and event_type in ('contact.imported','contact.import_undone')",[tenantA])).rows[0].n,3);
 });
+test('gestor une fichas compatíveis do tenant com histórico, destino e descadastro preservados', {skip:!enabled}, async () => {
+  const create = async (name, phone, as='admin') =>
+    (await ok('POST','/api/contacts',{name,phone,tags:[name]},as,201)).contact;
+  const keep = await create('Principal','(17) 99876-4321');
+  const duplicate = await create('Segunda','5517998764321');
+  const foreign = await create('Externa','(17) 99876-4321','other');
+  const url = `/api/contacts/${keep.id}`;
+  await db.query("update contacts set source='whatsapp',newsletter_status='unsubscribed',unsubscribed_at=now() where id=$1",[duplicate.id]);
+  const thread = (await db.query('insert into conversations(tenant_id,contact_id) values($1,$2) returning id',[tenantA,duplicate.id])).rows[0];
+  await db.query("insert into messages(tenant_id,conversation_id,direction,body,status) values($1,$2,'inbound','Mensagem preservada','received')",[tenantA,thread.id]);
+  await db.query("insert into tasks(tenant_id,contact_id,title) values($1,$2,'Tarefa preservada')",[tenantA,duplicate.id]);
+  const before = await ok('GET',url+'/timeline');
+  assert.deepEqual(before.duplicates.map(row => [row.id,row.reasons]),[[duplicate.id,['telefone']]]);
+  assert.deepEqual((await ok('GET',url+'/timeline',undefined,'agent')).duplicates,[]);
+  assert.equal((await call('POST',url+'/merge',{sourceId:duplicate.id},'agent')).statusCode,403);
+  assert.equal((await call('POST',url+'/merge',{sourceId:foreign.id})).statusCode,404);
+  await db.query("update contacts set email=case when id=$1 then 'a@x.test' else 'b@x.test' end where id in ($1,$2)",[keep.id,duplicate.id]);
+  assert.equal((await call('POST',url+'/merge',{sourceId:duplicate.id})).statusCode,422);
+  await db.query("update contacts set email=null where id=$1",[duplicate.id]);
+  const merged = (await ok('POST',url+'/merge',{sourceId:duplicate.id})).contact;
+  assert.equal(merged.id,keep.id);
+  assert.equal(merged.phone,'5517998764321');
+  assert.equal(merged.newsletter_status,'unsubscribed');
+  assert.deepEqual(merged.tags.sort(),['Principal','Segunda']);
+  const timeline=await ok('GET',url+'/timeline');
+  assert.deepEqual(timeline.duplicates,[]);
+  assert.equal(timeline.tasks[0].title,'Tarefa preservada');
+  assert.equal(timeline.messages[0].body,'Mensagem preservada');
+  assert.equal(timeline.events.filter(row=>row.event_type==='contact.created').length,2);
+  assert.ok(timeline.events.some(row=>row.event_type==='contact.merged'));
+  assert.equal((await call('GET',`/api/contacts/${duplicate.id}/timeline`)).statusCode,404);
+});
+
+test('webhooks sociais concorrentes reutilizam contato e conversa e contam cada mensagem uma vez', {skip:!enabled}, async () => {
+  const page = randomUUID();
+  const channel = (await db.query("insert into channels(tenant_id,provider,external_id,display_name,status) values($1,'messenger',$2,'Teste','connected') returning id",[tenantA,page])).rows[0];
+  const previous = process.env.META_MESSAGING_APP_SECRET;
+  process.env.META_MESSAGING_APP_SECRET='fixture-social';
+  const post = async mid => {
+    const payload=JSON.stringify({object:'page',entry:[{id:page,messaging:[{sender:{id:'visitante'},recipient:{id:page},message:{mid,text:'Oi'},timestamp:Date.now()}]}]});
+    return app.inject({method:'POST',url:'/webhooks/meta/messaging',payload,headers:{'content-type':'application/json','x-hub-signature-256':'sha256='+createHmac('sha256','fixture-social').update(payload).digest('hex')}});
+  };
+  try {
+    const responses=await Promise.all(['social-a','social-a','social-b'].map(post));
+    responses.forEach(r=>assert.equal(r.statusCode,200,r.body));
+    assert.equal(responses.reduce((n,r)=>n+r.json().imported,0),2);
+    const result=await db.query('select contact_id,unread_count from conversations where tenant_id=$1 and channel_id=$2',[tenantA,channel.id]);
+    assert.equal(result.rows.length,1);
+    assert.equal(result.rows[0].unread_count,2);
+    assert.equal((await db.query("select count(*)::int as n from contacts where tenant_id=$1 and source='messenger'",[tenantA])).rows[0].n,1);
+  } finally {
+    if(previous === undefined) delete process.env.META_MESSAGING_APP_SECRET;
+    else process.env.META_MESSAGING_APP_SECRET=previous;
+  }
+});
+
 test('calendar updates, cancellation, reopening and failures are auditable without external calls',{skip:!enabled},async()=>{
   const task=(await db.query("insert into tasks(tenant_id,title,due_at) values($1,'Calendar fixture','2026-10-01T12:00:00Z') returning *",[tenantA])).rows[0];
   await db.query("insert into integrations(tenant_id,provider,access_token) values($1,'google_calendar','fixture-token')",[tenantA]);

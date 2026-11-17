@@ -1,6 +1,6 @@
 import { RecordRelations } from '../CrmRecordTools'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Clock,
   History,
@@ -14,10 +14,12 @@ import {
   createTask,
   deleteContact,
   getContactTimeline,
+  mergeContactRecords,
   openContactWhatsApp,
   updateContact,
   updateTask,
   type CrmContact,
+  type ContactDuplicate,
 } from '../../lib/crm'
 
 interface ContactDetailDrawerProps {
@@ -36,6 +38,7 @@ export default function ContactDetailDrawer({
   const router = useRouter()
   const [data, setData] = useState<{
     contact: CrmContact
+    duplicates: ContactDuplicate[]
     events: { id: string; entity_type: string; event_type: string; payload: Record<string, unknown>; created_at: string }[]
     tasks: { id: string; title: string; description: string | null; priority: string; due_at: string | null; status: string; created_at: string }[]
     messages: { id: string; direction: string; body: string; sent_at: string; status: string }[]
@@ -57,10 +60,14 @@ export default function ContactDetailDrawer({
   const [addingTask, setAddingTask] = useState(false)
   const [openingWhatsapp, setOpeningWhatsapp] = useState(false)
 
-  const loadDetails = () => {
+  const loadGeneration = useRef<symbol | null>(null)
+  const loadDetails = useCallback(() => {
+    const generation = Symbol()
+    loadGeneration.current = generation
     setLoading(true)
     getContactTimeline(contactId)
       .then((res) => {
+        if (generation !== loadGeneration.current) return
         setError('')
         setData(res)
         setForm({
@@ -71,13 +78,18 @@ export default function ContactDetailDrawer({
           tags: res.contact.tags ? res.contact.tags.join(', ') : '',
         })
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }
+      .catch((err) => {
+        if (generation === loadGeneration.current) setError(err.message)
+      })
+      .finally(() => {
+        if (generation === loadGeneration.current) setLoading(false)
+      })
+  }, [contactId])
 
   useEffect(() => {
     loadDetails()
-  }, [contactId])
+    return () => { loadGeneration.current = null }
+  }, [loadDetails])
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -121,6 +133,22 @@ export default function ContactDetailDrawer({
       onClose()
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Falha ao remover contato.')
+    }
+  }
+
+  const handleMerge = async (duplicate: ContactDuplicate) => {
+    if (!data || data.contact.id !== contactId || saving) return
+    if (!confirm(`Unir “${duplicate.name}” a “${data.contact.name}”? As conversas, tarefas e negócios ficarão nesta ficha.`)) return
+    setSaving(true)
+    try {
+      const result = await mergeContactRecords(contactId, duplicate.id)
+      onUpdated?.(result.contact)
+      onDeleted?.(duplicate.id)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao unir as fichas.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -212,6 +240,23 @@ export default function ContactDetailDrawer({
         {!loading && data && (
           <div className="flex-1 overflow-y-auto">
             <RecordRelations kind="contacts" id={contactId} initial={data.contact} onSaved={loadDetails} />
+            {Boolean(data.duplicates?.length) && (
+              <details className="border-b border-slate-200 p-4 text-sm">
+                <summary className="cursor-pointer font-semibold">Possíveis duplicatas ({data.duplicates.length})</summary>
+                <ul className="mt-3 space-y-3">
+                  {data.duplicates.map(duplicate => (
+                    <li key={duplicate.id} className="flex items-center justify-between gap-3">
+                      <div>
+                        <strong>{duplicate.name}</strong>
+                        <p>{[duplicate.phone, duplicate.email].filter(Boolean).join(' • ')}</p>
+                        <p className="text-xs text-slate-600">Coincide por {duplicate.reasons.join(' e ')}</p>
+                      </div>
+                      <button type="button" disabled={saving} onClick={() => handleMerge(duplicate)} className="shrink-0 rounded border px-3 py-2">Unir fichas</button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {/* Informações Principais e Ações Rápidas */}
             <div className="border-b border-slate-100 bg-slate-50/60 p-5">
               <div className="flex flex-wrap items-center gap-2">

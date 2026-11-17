@@ -11,12 +11,10 @@ import { z } from "zod";
 import { query, transaction } from "./db.js";
 import {
   buildEntries,
+  classifyImport,
   guessMapping,
   LEGAL_BASES,
-  normalizeEmail,
   parseContactFile,
-  phoneKey,
-  type ImportEntry,
   type ImportMapping,
 } from "./contact-import.js";
 
@@ -66,26 +64,9 @@ const importSchema = fileSchema.extend({
   tags: z.array(z.string().trim().toLowerCase().min(1).max(40)).max(10).default([]),
 });
 
-type Existing = { id: string };
-
-/** O que já está na base, indexado do jeito que o arquivo vai ser comparado. */
 async function loadExisting(tenantId: string) {
   const result = await query<{ id: string; phone: string | null; email: string | null }>("select id, phone, email from contacts where tenant_id = $1", [tenantId]);
-  const byPhone = new Map<string, Existing>();
-  const byEmail = new Map<string, Existing>();
-  for (const row of result.rows) {
-    // Telefone antigo em formato que não normaliza ainda casa pelos dígitos.
-    const chave = phoneKey(row.phone) ?? (row.phone?.replace(/\D/g, "") || null);
-    if (chave) byPhone.set(chave, { id: row.id });
-    const email = normalizeEmail(row.email);
-    if (email && !byEmail.has(email)) byEmail.set(email, { id: row.id });
-  }
-  return { byPhone, byEmail };
-}
-
-function matchExisting(entry: ImportEntry, existing: Awaited<ReturnType<typeof loadExisting>>) {
-  const chave = phoneKey(entry.phone);
-  return (chave ? existing.byPhone.get(chave) : undefined) ?? (entry.email ? existing.byEmail.get(entry.email) : undefined) ?? null;
+  return result.rows;
 }
 
 function readFile(input: z.infer<typeof fileSchema>) {
@@ -119,7 +100,8 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
 
     const { entries, rejected, repeatedInFile } = buildEntries(file, mapping);
     const existing = await loadExisting(user.tenant_id);
-    const jaExistem = entries.filter((entry) => matchExisting(entry, existing)).length;
+    const classified = classifyImport(entries, existing);
+    const invalid = [...rejected, ...classified.conflicts];
     return {
       kind: file.kind,
       columns: file.columns,
@@ -127,12 +109,12 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
       sample: file.rows.slice(0, 5),
       totals: {
         rows: file.rows.length,
-        novos: entries.length - jaExistem,
-        jaExistem,
+        novos: classified.created.length,
+        jaExistem: entries.length - classified.created.length - classified.conflicts.length,
         repetidosNoArquivo: repeatedInFile,
-        invalidos: rejected.length,
+        invalidos: invalid.length,
       },
-      rejected: rejected.slice(0, 200),
+      rejected: invalid.slice(0, 200),
     };
   });
 
@@ -150,13 +132,8 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
       // contato duas vezes: a segunda espera a primeira terminar.
       await query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`contact-import:${user.tenant_id}`]);
       const existing = await loadExisting(user.tenant_id);
-      const novos: ImportEntry[] = [];
-      const repetidos: Array<ImportEntry & { id: string }> = [];
-      for (const entry of entries) {
-        const match = matchExisting(entry, existing);
-        if (match) repetidos.push({ ...entry, id: match.id });
-        else novos.push(entry);
-      }
+      const { created: novos, matched: repetidos, conflicts } = classifyImport(entries, existing);
+      const invalid = [...rejected, ...conflicts];
 
       const lote = await query<{ id: string; created_at: string }>(
         `insert into contact_imports (tenant_id, user_id, file_name, source_kind, legal_basis, origin_note, on_duplicate)
@@ -187,10 +164,10 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
           // e-mail que a equipe já tinha: o arquivo pode ser mais velho que a base.
           const changed = await query(
             `update contacts c
-             set email = coalesce(c.email, x.email), company = coalesce(c.company, x.company),
+             set email = coalesce(c.email, x.email), phone = coalesce(c.phone, x.phone), company = coalesce(c.company, x.company),
                tags = (select array(select distinct unnest(c.tags || array(select jsonb_array_elements_text(x.tags))))),
                legal_basis = coalesce(c.legal_basis, $3), updated_at = now()
-             from jsonb_to_recordset($2::jsonb) as x(id uuid, email text, company text, tags jsonb)
+             from jsonb_to_recordset($2::jsonb) as x(id uuid, email text, phone text, company text, tags jsonb)
              where c.tenant_id = $1 and c.id = x.id`,
             [user.tenant_id, JSON.stringify(parte), input.legalBasis],
           );
@@ -204,7 +181,7 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
         kept: input.onDuplicate === "keep" ? repetidos.length : 0,
         // Telefone que outra linha do mesmo lote já tinha criado (formatos diferentes do mesmo número).
         skipped: novos.length - created,
-        invalid: rejected.length,
+        invalid: invalid.length,
         repeatedInFile,
       };
       await query("update contact_imports set created_count = $2, updated_count = $3, skipped_count = $4, invalid_count = $5 where id = $1", [
@@ -223,10 +200,10 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
         null,
         (request as FastifyRequest & { requestId?: string }).requestId,
       );
-      return { importId, createdAt: lote.rows[0].created_at, summary };
+      return { importId, createdAt: lote.rows[0].created_at, summary, rejected: invalid.slice(0, 2000) };
     });
 
-    return reply.code(201).send({ ...result, rejected: rejected.slice(0, 2000), undoUntil: new Date(Date.parse(result.createdAt) + UNDO_HOURS * 3600 * 1000).toISOString() });
+    return reply.code(201).send({ ...result, undoUntil: new Date(Date.parse(result.createdAt) + UNDO_HOURS * 3600 * 1000).toISOString() });
   });
 
   app.get("/api/contacts/imports", async (request, reply) => {
