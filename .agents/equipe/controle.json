@@ -4,6 +4,24 @@
   "members": [],
   "tasks": [
     {
+      "id": "UI-REVIEW-001",
+      "title": "Revisar Canais, Integrações e Caixa de entrada",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Melhorar arquitetura da informação, legibilidade operacional, responsividade e acessibilidade das três telas sem alterar contratos de backend.",
+      "criteriosAceite": [
+        "Canais e Integrações sem itens duplicados e com estados e ações explícitos",
+        "Caixa de entrada sem identificadores técnicos visíveis e com leitura e resposta claras",
+        "Layouts validados em celular, tablet e desktop",
+        "Tipos, lint, testes web e build aprovados"
+      ],
+      "evidencias": [
+        "docs/superpowers/specs/2026-11-17-crm-interface-review-design.md",
+        "docs/superpowers/plans/2026-11-17-crm-interface-review.md"
+      ],
+      "ambiente": "implementação local em andamento"
+    },
+    {
       "id": "CONTAS-CRM-001",
       "title": "Sincronizar acesso corporativo do CRM com o Contas",
       "status": "em-andamento",
