@@ -11,6 +11,7 @@ export function NavRow({
   description,
   active = false,
   trailing,
+  actionLabel,
   onClick,
   disabled = false,
 }: {
@@ -19,6 +20,7 @@ export function NavRow({
   description?: string
   active?: boolean
   trailing?: ReactNode
+  actionLabel?: string
   onClick?: () => void
   disabled?: boolean
 }) {
@@ -42,6 +44,7 @@ export function NavRow({
         {description && <span className="mt-0.5 block text-[13px] leading-snug text-slate-500">{description}</span>}
       </span>
       {trailing}
+      {actionLabel && !disabled && <span className="hidden shrink-0 text-xs font-semibold text-blue-700 medium:inline">{actionLabel}</span>}
       {!disabled && <ChevronRight size={18} className="shrink-0 text-slate-400" aria-hidden="true" />}
     </button>
   )

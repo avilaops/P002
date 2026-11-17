@@ -1,34 +1,30 @@
-import { Calendar, CreditCard, Database, Mail, MessageCircle, Send, Workflow, type LucideIcon } from 'lucide-react'
+import { Calendar, CreditCard, Database, MessageCircle, Send, Workflow, type LucideIcon } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { FormField, Notice, ToggleRow } from '../../components/ui/Form'
 import { Sheet } from '../../components/ui/Sheet'
-import { StatusBadge } from '../../components/ui/StatusBadge'
+import { LoadingStatusBadge, StatusBadge } from '../../components/ui/StatusBadge'
 import type { ConnectionState } from '../../lib/connection'
-import { ApiError, listChannels } from '../../lib/crm'
+import { ApiError } from '../../lib/crm'
 import { disconnectGoogleIntegration, getGoogleAuthUrl, getGoogleIntegrationStatus } from '../../lib/googleCalendar'
 import { connectErp, disconnectErp, getErpStatus, type ErpStatus } from '../../lib/integrations'
-import { getMailAccount } from '../../lib/mail'
 import { getMessageriaStatus, type MessageriaStatus } from '../../lib/messageria'
 import { useNavigation } from '../../lib/navigationContext'
 import { buttonClass } from '../../lib/ui'
-import { describeWhatsAppConnection } from '../../lib/whatsappConnection'
 import type { Page } from '../../types'
 import { SettingsFrame } from './SettingsFrame'
 import { getThreadsStatus, type ThreadsStatus } from '../../lib/threads'
 import { ThreadsSheet } from './ThreadsSheet'
-
-type Kind = 'channel' | 'integration'
-type Filter = 'all' | Kind
+import { connectionSummary, integrationDefinitions } from './settingsPresentation'
 
 type Item = {
   id: string
-  kind: Kind
   name: string
   description: string
   icon: LucideIcon
   state: ConnectionState | null
   /** Texto do selo quando o estado padrão não diz o suficiente. */
   stateLabel?: string
+  actionLabel: string
   onOpen?: () => void
 }
 
@@ -43,10 +39,7 @@ type Item = {
  */
 export default function IntegrationCenterPage() {
   const { navigate } = useNavigation()
-  const [filter, setFilter] = useState<Filter>('all')
   const [messageria, setMessageria] = useState<MessageriaStatus | null>(null)
-  const [whatsapp, setWhatsapp] = useState<ConnectionState | null>(null)
-  const [mail, setMail] = useState<ConnectionState | null>(null)
   const [erp, setErp] = useState<ErpStatus | null>(null)
   const [google, setGoogle] = useState<{ connected: boolean; email?: string } | null>(null)
   const [erpOpen, setErpOpen] = useState(false)
@@ -59,17 +52,15 @@ export default function IntegrationCenterPage() {
 
   useEffect(() => {
     let active = true
-    Promise.allSettled([getMessageriaStatus(), listChannels(), getErpStatus(), getGoogleIntegrationStatus(), getMailAccount(), getThreadsStatus()]).then(
-      ([status, channels, erpStatus, googleStatus, mailAccount, threadsStatus]) => {
+    Promise.allSettled([getMessageriaStatus(), getErpStatus(), getGoogleIntegrationStatus(), getThreadsStatus()]).then(
+      ([status, erpStatus, googleStatus, threadsStatus]) => {
         if (!active) return
         const messageriaStatus = status.status === 'fulfilled' ? status.value : null
         setMessageria(messageriaStatus)
-        setWhatsapp(describeWhatsAppConnection(messageriaStatus, channels.status === 'fulfilled' ? channels.value.channels : []).state)
         setErp(erpStatus.status === 'fulfilled' ? erpStatus.value : null)
         setGoogle(googleStatus.status === 'fulfilled' ? googleStatus.value : null)
         setThreads(threadsStatus.status === 'fulfilled' ? threadsStatus.value : null)
         setThreadsError(threadsStatus.status === 'rejected' ? (threadsStatus.reason instanceof Error ? threadsStatus.reason.message : 'Threads indisponível.') : '')
-        setMail(mailAccount.status === 'fulfilled' ? (!mailAccount.value.account ? 'disconnected' : mailAccount.value.account.lastError ? 'error' : 'connected') : null)
       },
     )
     return () => {
@@ -104,89 +95,65 @@ export default function IntegrationCenterPage() {
 
   const go = (page: Page) => () => navigate(page)
   const messageriaState: ConnectionState | null = messageria === null ? null : !messageria.connected ? 'disconnected' : messageria.erro ? 'error' : 'connected'
+  const definition = (id: (typeof integrationDefinitions)[number]['id']) => integrationDefinitions.find((item) => item.id === id)!
 
   const items: Item[] = [
-    { id: 'threads', kind: 'integration', name: 'Threads', description: 'Conta da empresa e resultados de publicações públicas', icon: MessageCircle,
-      state: threadsError ? 'error' : threads === null ? null : threads.connected ? 'connected' : 'disconnected', onOpen: () => setThreadsOpen(true) },
-    { id: 'whatsapp', kind: 'channel', name: 'WhatsApp', description: 'Conversas com clientes pela conexão oficial', icon: MessageCircle, state: whatsapp, onOpen: go('whatsapp-channel') },
-    { id: 'email', kind: 'channel', name: 'E-mail', description: 'Caixa de entrada e envio da newsletter', icon: Mail, state: mail, onOpen: go('mail-settings') },
+    { ...definition('threads'), icon: MessageCircle,
+      state: threadsError ? 'error' : threads === null ? null : threads.connected ? 'connected' : 'disconnected', onOpen: () => setThreadsOpen(true), actionLabel: definition('threads').action },
     {
-      id: 'messageria',
-      kind: 'integration',
-      name: 'Messageria Ávila Ops',
-      description: 'Quem entrega o WhatsApp: janela de 24h, modelos e custo',
+      ...definition('messageria'),
       icon: Send,
       state: messageriaState,
       onOpen: go('whatsapp-channel'),
+      actionLabel: definition('messageria').action,
     },
     {
-      id: 'erp',
-      kind: 'integration',
-      name: 'ERP Ávila Ops',
-      description: 'Clientes, pedidos e pagamentos na linha do tempo do contato',
+      ...definition('erp'),
       icon: Database,
       state: erp === null ? null : erp.connected ? 'connected' : 'disconnected',
       onOpen: () => setErpOpen(true),
+      actionLabel: erp?.connected ? 'Gerenciar' : definition('erp').action,
     },
     {
-      id: 'google',
-      kind: 'integration',
-      name: 'Google Agenda',
+      ...definition('google'),
       description: google?.connected && google.email ? `Tarefas na agenda de ${google.email}` : 'Tarefas e reuniões na sua agenda do Google',
       icon: Calendar,
       state: google === null ? null : google.connected ? 'connected' : 'disconnected',
       onOpen: () => void toggleGoogle(),
+      actionLabel: google?.connected ? 'Desconectar' : definition('google').action,
     },
     {
-      id: 'n8n',
-      kind: 'integration',
-      name: 'n8n',
-      description: 'Cada automação chama o seu fluxo do n8n por webhook',
+      ...definition('n8n'),
       icon: Workflow,
       state: 'disconnected',
-      stateLabel: 'Por automação',
+      stateLabel: definition('n8n').unavailableLabel,
       onOpen: go('automations'),
+      actionLabel: definition('n8n').action,
     },
     {
-      id: 'pagamentos',
-      kind: 'integration',
-      name: 'Pagamentos',
-      description: 'Link de pagamento na conversa e status no negócio (Mercado Pago, Pix)',
+      ...definition('pagamentos'),
       icon: CreditCard,
       state: 'soon',
+      stateLabel: definition('pagamentos').unavailableLabel,
+      actionLabel: definition('pagamentos').action,
     },
   ]
-
-  const visible = items.filter((item) => filter === 'all' || item.kind === filter)
-  const filters: { id: Filter; label: string }[] = [
-    { id: 'all', label: 'Todas' },
-    { id: 'channel', label: 'Canais' },
-    { id: 'integration', label: 'Integrações' },
-  ]
+  const summary = connectionSummary(items.map((item) => item.state))
 
   return (
     <SettingsFrame page="integrations" title="Integrações" description="Canais trazem conversas; integrações trocam dados com outros sistemas da empresa.">
       <div className="space-y-4">
-        <div className="scroll-chips -mx-4 flex gap-2 px-4" role="group" aria-label="Filtrar">
-          {filters.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              aria-pressed={filter === option.id}
-              onClick={() => setFilter(option.id)}
-              className={`inline-flex min-h-11 shrink-0 items-center rounded-full border px-4 text-sm font-medium ${
-                filter === option.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <section aria-label="Resumo das integrações" className="grid grid-cols-2 gap-3 large:grid-cols-4">
+          <SummaryCard value={summary.active} label="ativas" tone="text-emerald-700" />
+          <SummaryCard value={summary.attention} label="precisam de atenção" tone="text-amber-700" />
+          <SummaryCard value={summary.unavailable} label="indisponíveis" tone="text-slate-600" />
+          <SummaryCard value={summary.loading} label="verificando" tone="text-blue-700" />
+        </section>
 
         {feedback && <Notice tone={feedback.tone}>{feedback.text}</Notice>}
 
         <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-          {visible.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon
             const content = (
               <>
@@ -197,7 +164,10 @@ export default function IntegrationCenterPage() {
                   <span className="block font-medium text-slate-900">{item.name}</span>
                   <span className="block text-sm leading-snug text-slate-500">{item.description}</span>
                 </span>
-                {item.state ? <StatusBadge state={item.state} label={item.stateLabel} /> : <span className="text-xs text-slate-400">…</span>}
+                <span className="flex shrink-0 items-center gap-3">
+                  {item.state ? <StatusBadge state={item.state} label={item.stateLabel} /> : <LoadingStatusBadge />}
+                  {item.onOpen && <span className="hidden text-xs font-semibold text-blue-700 medium:inline">{item.actionLabel}</span>}
+                </span>
               </>
             )
             return (
@@ -228,6 +198,10 @@ export default function IntegrationCenterPage() {
       />
     </SettingsFrame>
   )
+}
+
+function SummaryCard({ value, label, tone }: { value: number; label: string; tone: string }) {
+  return <div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><strong className={`block text-2xl leading-none ${tone}`}>{value}</strong><span className="mt-1 block text-xs font-medium text-slate-600">{label}</span></div>
 }
 
 function ErpSheet({ open, status, onClose, onChanged }: { open: boolean; status: ErpStatus | null; onClose: () => void; onChanged: (message: string) => void }) {

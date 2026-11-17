@@ -20,6 +20,15 @@ export function StatusBadge({ state, label }: { state: ConnectionState; label?: 
   )
 }
 
+export function LoadingStatusBadge({ label = 'Verificando' }: { label?: string }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200" role="status">
+      <span className="size-1.5 animate-pulse rounded-full bg-slate-400" aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
 export function ToneBadge({ tone, children }: { tone: Tone; children: string }) {
   return (
     <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${toneClasses[tone].badge}`}>
