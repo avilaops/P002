@@ -306,6 +306,13 @@ create table if not exists message_media (
 
 alter table message_media add column if not exists storage_provider text not null default 'local';
 alter table message_media add column if not exists storage_key text;
+alter table message_media add column if not exists preview_storage_provider text;
+alter table message_media add column if not exists preview_storage_key text;
+alter table message_media add column if not exists preview_mime_type text;
+alter table message_media add column if not exists processing_status text not null default 'pending';
+alter table message_media add column if not exists transcription text;
+alter table message_media add column if not exists transcription_language text;
+alter table message_media add column if not exists processing_error text;
 update message_media set storage_key = storage_path where storage_key is null and storage_path is not null;
 do $$ begin
   alter table message_media add constraint message_media_storage_provider_check check (storage_provider in ('local', 'r2'));
@@ -314,6 +321,30 @@ end $$;
 
 create index if not exists message_media_tenant_created_at_idx on message_media(tenant_id, created_at desc);
 create unique index if not exists message_media_tenant_external_id_idx on message_media(tenant_id, external_id) where external_id is not null;
+
+create table if not exists media_processing_jobs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  media_id uuid not null references message_media(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'processing', 'completed', 'failed')),
+  attempts int not null default 0,
+  available_at timestamptz not null default now(),
+  locked_at timestamptz,
+  locked_by text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (media_id)
+);
+
+create index if not exists media_processing_jobs_available_idx
+  on media_processing_jobs(status, available_at, created_at);
+
+insert into media_processing_jobs(tenant_id,media_id)
+select tenant_id,id from message_media
+where status='ready' and storage_key is not null
+  and (mime_type like 'image/%' or mime_type like 'audio/%' or mime_type like 'video/%')
+on conflict(media_id) do nothing;
 
 alter table messages add column if not exists media_id uuid references message_media(id) on delete set null;
 
@@ -879,6 +910,10 @@ create table if not exists contact_imports (
 create index if not exists contact_imports_tenant_idx on contact_imports(tenant_id, created_at desc);
 alter table contacts add column if not exists import_id uuid references contact_imports(id) on delete set null;
 alter table contacts add column if not exists legal_basis text;
+alter table contacts add column if not exists avatar_storage_provider text;
+alter table contacts add column if not exists avatar_storage_key text;
+alter table contacts add column if not exists avatar_mime_type text;
+alter table contacts add column if not exists avatar_synced_at timestamptz;
 create index if not exists contacts_import_idx on contacts(tenant_id, import_id) where import_id is not null;
 
 -- Reuniões: mídia no LiveKit, histórico e fila durável no CRM.

@@ -40,6 +40,7 @@ import {
   listWhatsAppTemplates,
   markConversationRead,
   mediaContentUrl,
+  mediaPreviewUrl,
   sendConversationMedia,
   sendConversationMessage,
   sendConversationTemplate,
@@ -564,9 +565,7 @@ function ChatInbox({
                     onClick={() => handleSelect(conversation.id)}
                   >
                     <div className="relative shrink-0">
-                      <div className="grid size-11 place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700">
-                        {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
-                      </div>
+                      <ContactAvatar conversation={conversation} size="size-11" />
                       {conversation.unread_count > 0 && (
                         <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
                           {conversation.unread_count > 99 ? '99+' : conversation.unread_count}
@@ -627,6 +626,7 @@ function ChatInbox({
                   <button type="button" className="grid size-11 shrink-0 place-items-center rounded-full text-slate-600 hover:bg-slate-100 expanded:hidden" aria-label="Voltar para as conversas" onClick={handleBack}>
                     <ChevronLeft size={22} aria-hidden="true" />
                   </button>
+                  <ContactAvatar conversation={selected} size="size-10" />
                   <div className="min-w-0 flex-1 px-1">
                     <h2 className="truncate font-semibold text-slate-900">{contactLabel(selected)}</h2>
                     <p className="truncate text-xs text-slate-600">{contactSecondaryLabel(selected)} • {selected.channel_name ?? 'WhatsApp'}</p>
@@ -664,7 +664,7 @@ function ChatInbox({
                 </div>
               </div>
               {feedback}
-              <div className="min-h-0 flex-1 overflow-y-auto p-3 expanded:p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto bg-[#efeae2] bg-[radial-gradient(circle_at_1px_1px,rgba(17,27,33,0.045)_1px,transparent_0)] bg-size-[18px_18px] p-3 expanded:p-5">
                 {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-500">Nenhuma mensagem gravada para esta conversa.</p>}
                 <div className="mx-auto w-full max-w-[860px] space-y-5">
                   {messageGroups.map((group) => (
@@ -816,14 +816,14 @@ function MessageBubble({ message }: { message: CrmMessage }) {
   const texto = message.media_id && marcador ? message.media_caption ?? '' : message.body ?? ''
   return (
     <div className={`flex ${inbound ? 'justify-start' : 'justify-end'}`}>
-      <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm shadow-sm expanded:max-w-[76%] ${inbound ? 'rounded-bl-md bg-white text-slate-900 ring-1 ring-slate-200' : 'rounded-br-md bg-blue-600 text-white'}`}>
+      <div className={`max-w-[88%] rounded-xl px-3 py-2 text-sm shadow-sm expanded:max-w-[76%] ${inbound ? 'rounded-tl-sm bg-white text-[#111b21]' : 'rounded-tr-sm bg-[#d9fdd3] text-[#111b21]'}`}>
         {message.media_id && <MessageAttachment message={message} />}
         {texto && <p className={message.media_id ? 'mt-2 whitespace-pre-wrap' : 'whitespace-pre-wrap'}>{texto}</p>}
         {!texto && !message.media_id && <p className="italic opacity-70">[sem conteúdo]</p>}
-        <p className={`mt-2 flex items-center justify-end gap-1 text-xs ${inbound ? 'text-slate-500' : 'text-blue-100'}`}>
+        <p className="mt-1 flex items-center justify-end gap-1 text-[11px] text-[#667781]">
           <span>{new Date(message.sent_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}{message.message_type === 'template' ? ' • modelo' : ''}</span>
           {!inbound && <MessageStatusIcon status={status.icon} />}
-          {!inbound && <span>{status.label}</span>}
+          {!inbound && <span className="sr-only">{status.label}</span>}
         </p>
         {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
       </div>
@@ -858,16 +858,17 @@ function MessageAttachment({ message }: { message: CrmMessage }) {
   }
 
   const url = mediaContentUrl(message.media_id)
+  const preview = message.media_preview_available ? mediaPreviewUrl(message.media_id) : url
   const mime = message.media_mime_type ?? ''
 
   if (mime.startsWith('image/')) {
-    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={message.media_file_name ?? 'Anexo'} className="max-h-72 rounded" /></a>
+    return <a href={url} target="_blank" rel="noreferrer"><img src={preview} alt={message.media_file_name ?? 'Foto recebida'} loading="lazy" className="max-h-80 w-auto rounded-lg object-contain" /></a>
   }
   if (mime.startsWith('audio/')) {
-    return <audio controls src={url} className="w-64" />
+    return <MediaWithTranscription message={message}><audio controls preload="metadata" src={url} className="w-64 max-w-full" /></MediaWithTranscription>
   }
   if (mime.startsWith('video/')) {
-    return <video controls src={url} className="max-h-72 rounded" />
+    return <MediaWithTranscription message={message}><video controls preload="metadata" poster={message.media_preview_available ? preview : undefined} src={url} className="max-h-80 rounded-lg" /></MediaWithTranscription>
   }
   return (
     <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded bg-black/10 px-3 py-2 text-xs font-semibold underline">
@@ -875,6 +876,32 @@ function MessageAttachment({ message }: { message: CrmMessage }) {
       {message.media_file_name ?? 'Baixar anexo'}
     </a>
   )
+}
+
+function MediaWithTranscription({ message, children }: { message: CrmMessage; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      {children}
+      {message.media_transcription ? (
+        <details className="rounded-lg bg-black/5 px-3 py-2" open>
+          <summary className="cursor-pointer text-xs font-semibold text-[#54656f]">Transcrição</summary>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-5">{message.media_transcription}</p>
+        </details>
+      ) : message.media_processing_status === 'pending' ? (
+        <p className="text-xs text-[#667781]">Transcrevendo…</p>
+      ) : message.media_processing_status === 'failed' ? (
+        <p className="text-xs text-amber-700" title={message.media_processing_error ?? undefined}>Transcrição indisponível.</p>
+      ) : null}
+    </div>
+  )
+}
+
+function ContactAvatar({ conversation, size }: { conversation: CrmConversation; size: string }) {
+  const label = contactLabel(conversation)
+  if (conversation.contact_avatar_url) {
+    return <img src={conversation.contact_avatar_url} alt={`Foto de ${label}`} loading="lazy" className={`${size} rounded-full bg-slate-200 object-cover`} />
+  }
+  return <span aria-hidden="true" className={`grid ${size} place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700`}>{initials(label)}</span>
 }
 
 /**

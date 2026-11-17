@@ -4,6 +4,25 @@
   "members": [],
   "tasks": [
     {
+      "id": "WHATSAPP-MEDIA-001",
+      "title": "Aproximar a caixa de entrada do WhatsApp com mídia processada",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Exibir avatares e previews e transcrever automaticamente áudio e vídeo sem bloquear a sincronização do histórico.",
+      "criteriosAceite": [
+        "Fotos de contatos aparecem na lista e no cabeçalho com fallback por iniciais",
+        "Imagens e vídeos possuem prévia e preservam o original privado no R2",
+        "Áudios e vídeos são transcritos por worker durável com FFmpeg e Faster Whisper",
+        "Interface responsiva se aproxima do WhatsApp sem perder ações operacionais do CRM",
+        "Tipos, lint, testes, build, navegador e produção verificados"
+      ],
+      "evidencias": [
+        "docs/superpowers/specs/2026-11-17-whatsapp-inbox-media-design.md",
+        "docs/superpowers/plans/2026-11-17-whatsapp-inbox-media.md"
+      ],
+      "ambiente": "implementação em andamento"
+    },
+    {
       "id": "UI-REVIEW-001",
       "title": "Revisar Canais, Integrações e Caixa de entrada",
       "status": "concluido",

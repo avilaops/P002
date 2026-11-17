@@ -25,6 +25,7 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache ffmpeg
 # O commit da imagem, que o /api/health devolve em `revision`. O workflow
 # compartilhado do avilaops/infra passa GIT_SHA=github.sha em todo build.
 ARG GIT_SHA=development

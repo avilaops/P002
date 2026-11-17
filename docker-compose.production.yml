@@ -37,10 +37,52 @@ services:
       avilaops.backup: "true"
       avilaops.owner: nicolas
 
+  media-worker:
+    image: ghcr.io/avilaops/crm.avilaops.com:latest
+    container_name: crm-avilaops-com-media-worker
+    restart: unless-stopped
+    init: true
+    env_file: [.env]
+    environment:
+      TRANSCRIPTION_BASE_URL: http://speaches:8000
+      TRANSCRIPTION_MODEL: Systran/faster-whisper-base
+    command: ["npm", "run", "media:worker"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - storage:/app/storage
+    networks: [edge, media]
+    depends_on: [speaches]
+    mem_limit: 384m
+    cpus: 1.0
+    labels:
+      avilaops.stack: crm
+      avilaops.tier: worker
+      avilaops.owner: nicolas
+
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: crm-avilaops-com-speaches
+    restart: unless-stopped
+    init: true
+    mem_limit: 1200m
+    cpus: 1.5
+    networks: [media]
+    volumes:
+      - whisper-cache:/home/ubuntu/.cache/huggingface/hub
+    labels:
+      avilaops.stack: crm
+      avilaops.tier: internal-ai
+      avilaops.owner: nicolas
+
 volumes:
   storage:
     name: crm-avilaops-com-storage
+  whisper-cache:
+    name: crm-avilaops-com-whisper-cache
 
 networks:
   edge:
     external: true
+  media:
+    name: crm-avilaops-com-media
+    internal: true

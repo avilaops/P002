@@ -38,6 +38,20 @@ test('destinatários de grupos e LID são preservados no envio', async () => {
   await client.sendText('123456789012@g.us', 'Oi')
 })
 
+test('foto de perfil usa o endpoint v2 e aceita somente URL HTTPS', async () => {
+  const requested = []
+  const client = createEvolutionClient({ baseUrl: 'https://example.com', apiKey: 'test', tenantId: 'test', instanceName: 'instance' }, async (url, init) => {
+    requested.push({ url: String(url), body: JSON.parse(init.body) })
+    return Response.json({ profilePictureUrl: 'https://pps.whatsapp.net/photo.jpg' })
+  })
+  assert.equal(await client.profilePictureUrl('5511999999999'), 'https://pps.whatsapp.net/photo.jpg')
+  assert.match(requested[0].url, /\/chat\/fetchProfilePictureUrl\/instance$/)
+  assert.equal(requested[0].body.number, '5511999999999')
+
+  const unsafe = createEvolutionClient({ baseUrl: 'https://example.com', apiKey: 'test', tenantId: 'test', instanceName: 'instance' }, async () => Response.json({ profilePictureUrl: 'http://127.0.0.1/private' }))
+  assert.equal(await unsafe.profilePictureUrl('5511999999999'), null)
+})
+
 test('importa mais de 100 mensagens, retoma após falha e repete o histórico sem duplicar', async () => {
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const config = { baseUrl: 'https://example.com', apiKey: 'test', tenantId, instanceName: 'test' }

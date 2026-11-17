@@ -105,6 +105,21 @@ export function createEvolutionClient(config: EvolutionConfig, transport: typeof
       if (!bytes.length || bytes.length > maxMediaBytes()) throw new EvolutionError('Arquivo acima do limite de mídia.')
       return bytes
     },
+    async profilePictureUrl(number: string) {
+      const address = evolutionAddress(number.includes('@') ? number : `${number.replace(/\D/g, '')}@s.whatsapp.net`)
+      if (!address || address.endsWith('@g.us')) return null
+      try {
+        const data = await request(`/chat/fetchProfilePictureUrl/${instance}`, { number: address }) as Json
+        const candidate = data.profilePictureUrl ?? data.picture ?? data.url
+        if (typeof candidate !== 'string') return null
+        const url = new URL(candidate)
+        if (url.protocol !== 'https:' || url.username || url.password) return null
+        return url.toString()
+      } catch (error) {
+        if (error instanceof EvolutionError && error.status === 404) return null
+        throw error
+      }
+    },
   }
 }
 
@@ -117,7 +132,49 @@ export async function sendEvolutionText(tenantId: string, instanceName: string, 
 export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies) {
   const db = deps.query ?? query
   const transact = deps.query ? async <T>(work: () => Promise<T>) => work() : transaction
+  const enqueueMedia = (tenantId: string, mediaId: string) => db(
+    `insert into media_processing_jobs(tenant_id,media_id) values($1,$2)
+     on conflict(media_id) do update set status=case when media_processing_jobs.status='completed' then 'completed' else 'pending' end,
+       available_at=case when media_processing_jobs.status='completed' then media_processing_jobs.available_at else now() end,updated_at=now()`,
+    [tenantId, mediaId],
+  )
   const syncing = new Set<string>()
+  const avatarSyncing = new Set<string>()
+  async function syncAvatar(config: EvolutionConfig, client: ReturnType<typeof createEvolutionClient>, contactId: string, conversationId: string, phone: string) {
+    if (avatarSyncing.has(contactId)) return
+    avatarSyncing.add(contactId)
+    try {
+      const current = await db<{ avatar_storage_provider: 'local' | 'r2' | null; avatar_storage_key: string | null; avatar_synced_at: string | null }>(
+        `select avatar_storage_provider,avatar_storage_key,avatar_synced_at from contacts
+         where tenant_id=$1 and id=$2`, [config.tenantId, contactId],
+      )
+      const contact = current.rows[0]
+      if (!contact || (contact.avatar_synced_at && Date.now() - new Date(contact.avatar_synced_at).getTime() < 7 * 86_400_000)) return
+      const pictureUrl = await client.profilePictureUrl(phone)
+      if (!pictureUrl) {
+        await db('update contacts set avatar_synced_at=now() where tenant_id=$1 and id=$2', [config.tenantId, contactId])
+        return
+      }
+      const response = await (deps.fetch ?? fetch)(pictureUrl, { redirect: 'follow', signal: AbortSignal.timeout(12_000) })
+      const mime = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? ''
+      const declared = Number(response.headers.get('content-length'))
+      if (!response.ok || !['image/jpeg', 'image/png', 'image/webp'].includes(mime) || (Number.isFinite(declared) && declared > 5 * 1024 * 1024)) throw new Error('Avatar inválido.')
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Avatar acima do limite.')
+      const storage = createMediaStorage()
+      const stored = await storage.put({ tenantId: config.tenantId, conversationId, bytes, mimeType: mime, fileName: `avatar.${mime.split('/')[1]}` })
+      await db(
+        `update contacts set avatar_storage_provider=$3,avatar_storage_key=$4,avatar_mime_type=$5,avatar_synced_at=now(),updated_at=now()
+         where tenant_id=$1 and id=$2`, [config.tenantId, contactId, stored.provider, stored.key, mime],
+      )
+      if (contact.avatar_storage_provider && contact.avatar_storage_key) {
+        await storage.delete({ provider: contact.avatar_storage_provider, key: contact.avatar_storage_key }).catch(() => {})
+      }
+      deps.publish?.({ type: 'conversation.updated', tenantId: config.tenantId, conversationId, data: { id: conversationId, contact_avatar_url: `/api/contacts/${contactId}/avatar` } })
+    } catch {
+      await db('update contacts set avatar_synced_at=now() where tenant_id=$1 and id=$2', [config.tenantId, contactId]).catch(() => {})
+    } finally { avatarSyncing.delete(contactId) }
+  }
   async function syncProgress(config: EvolutionConfig) {
     const result = await db('select metadata from channels where tenant_id=$1 and provider=\'evolution\' and external_id=$2', [config.tenantId, config.instanceName])
     return { state: 'idle', historyPage: 1, total: null, imported: 0, inspected: 0, lastSuccessAt: null, error: null, historyComplete: false, ...result.rows[0]?.metadata?.evolutionSync }
@@ -143,6 +200,7 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
       await transact(async () => {
         await db(`update message_media set file_size=$3,storage_provider=$4,storage_key=$5,storage_path=case when $4='local' then $5 else null end,sha256=$6,status='ready',error_message=null,updated_at=now() where tenant_id=$1 and id=$2`, [config.tenantId, media.id, bytes.length, stored.provider, stored.key, stored.sha256])
         await db(`update messages set metadata=metadata||'{"mediaUnavailable":false}'::jsonb where tenant_id=$1 and id=$2`, [config.tenantId, media.message_id])
+        await enqueueMedia(config.tenantId, media.id)
       })
       deps.publish?.({ type: 'message.updated', tenantId: config.tenantId, conversationId: media.conversation_id, data: { id: media.message_id, media_id: media.id, media_status: 'ready', media_mime_type: media.mime_type, media_file_name: media.file_name, media_file_size: bytes.length } })
     } catch { /* The claim timestamp schedules the next attempt automatically. */ }
@@ -229,12 +287,21 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
         const { address: phone, externalId, text, type, fromMe, sentAt } = parsed
         const exists = await db('select id from messages where tenant_id=$1 and external_id=$2', [config.tenantId, externalId])
         if (exists.rows.length) {
+          if (deps.background === true && !phone.endsWith('@g.us')) {
+            const known = await db<{ conversation_id: string; contact_id: string }>(
+              `select m.conversation_id,c.contact_id from messages m
+               join conversations c on c.tenant_id=m.tenant_id and c.id=m.conversation_id
+               where m.tenant_id=$1 and m.external_id=$2 and c.contact_id is not null`, [config.tenantId, externalId],
+            )
+            if (known.rows[0]) void syncAvatar(config, client, known.rows[0].contact_id, known.rows[0].conversation_id, phone)
+          }
           if (parsed.media) await retryFailedMedia(config, client, item)
           if (Date.now() >= deadline) { exhausted = true; break }
           continue
         }
         const contactId = await deps.upsertContact!(config.tenantId, phone, phone.endsWith('@g.us') ? `Grupo ${phone.split('@')[0]}` : !fromMe && typeof item.pushName === 'string' ? item.pushName : undefined)
         const conversationId = await deps.conversation!(config.tenantId, channelId, contactId)
+        if (deps.background === true && !phone.endsWith('@g.us')) void syncAvatar(config, client, contactId, conversationId, phone)
         // Download before opening the database transaction. Expired attachments
         // remain visible with an explicit failure instead of disappearing.
         let attachment: { mime: string; name: string | null; size: number | null; provider: 'local' | 'r2'; key: string | null; path: string | null; sha: string | null; error: string | null } | null = null
@@ -263,6 +330,7 @@ export function registerEvolutionRoutes(app: FastifyInstance, deps: Dependencies
           if (attachment) {
             const media = await db(`insert into message_media(tenant_id,conversation_id,direction,external_id,mime_type,file_name,file_size,storage_provider,storage_key,storage_path,sha256,caption,status,error_message) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict(tenant_id,external_id) where external_id is not null do update set updated_at=now() returning id`, [config.tenantId, conversationId, fromMe ? 'outbound' : 'inbound', externalId, attachment.mime, attachment.name, attachment.size, attachment.provider, attachment.key, attachment.path, attachment.sha, parsed.media?.caption ?? null, attachment.error ? 'failed' : 'ready', attachment.error])
             await db('update messages set media_id=$3 where tenant_id=$1 and id=$2', [config.tenantId, result.rows[0].id, media.rows[0].id])
+            if (!attachment.error) await enqueueMedia(config.tenantId, media.rows[0].id)
             Object.assign(result.rows[0], { media_id: media.rows[0].id, media_status: attachment.error ? 'failed' : 'ready', media_mime_type: attachment.mime, media_file_name: attachment.name, media_file_size: attachment.size, media_caption: parsed.media?.caption ?? null })
           }
           const conversation = await db(`update conversations set status=case when $3::timestamptz>=coalesce(last_message_at,$3::timestamptz) then case when $4 then 'open' else 'waiting' end else status end,unread_count=unread_count+case when $4 or $3::timestamptz<=coalesce(last_read_at,'epoch'::timestamptz) or $5 then 0 else 1 end,last_message_at=greatest(last_message_at,$3::timestamptz),last_customer_message_at=case when $4 then last_customer_message_at else greatest(last_customer_message_at,$3::timestamptz) end,last_agent_message_at=case when $4 then greatest(last_agent_message_at,$3::timestamptz) else last_agent_message_at end,updated_at=now() where tenant_id=$1 and id=$2 returning id,status,unread_count,last_message_at,last_customer_message_at,last_agent_message_at`, [config.tenantId, conversationId, sentAt, fromMe, item.status === 'READ' || item.status === 'PLAYED'])

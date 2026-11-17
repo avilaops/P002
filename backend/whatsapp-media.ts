@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { query } from "./db.js";
 import { createMediaStorage, isR2KeyForTenant } from "./media-storage.js";
+import { enqueueMediaProcessing } from "./media-processing.js";
 import { publishRealtimeAsync } from "./realtime.js";
 
 /**
@@ -81,6 +82,9 @@ type MediaRow = {
   storage_provider: "local" | "r2";
   storage_key: string | null;
   status: string;
+  preview_storage_provider?: "local" | "r2" | null;
+  preview_storage_key?: string | null;
+  preview_mime_type?: string | null;
 };
 
 export async function persistBytes(tenantId: string, conversationId: string, bytes: Buffer, mimeType: string, fileName: string | null) {
@@ -165,6 +169,7 @@ export async function ingestInboundMedia(input: {
      where id = $1`,
     [mediaRowId, mimeType, bytes.byteLength, stored.sha256, stored.provider, stored.key],
   );
+  await enqueueMediaProcessing(input.tenantId, mediaRowId);
 
   publishRealtimeAsync({
     type: "message.updated",
@@ -198,6 +203,38 @@ export type MediaRouteDeps = {
 };
 
 export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRouteDeps) {
+  app.get("/api/contacts/:id/avatar", async (request, reply) => {
+    const user = await deps.requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await query<{ avatar_storage_provider: "local" | "r2" | null; avatar_storage_key: string | null; avatar_mime_type: string | null }>(
+      "select avatar_storage_provider,avatar_storage_key,avatar_mime_type from contacts where tenant_id=$1 and id=$2", [user.tenant_id, id],
+    );
+    const avatar = result.rows[0];
+    if (!avatar?.avatar_storage_provider || !avatar.avatar_storage_key) return reply.code(404).send({ error: "Foto não encontrada." });
+    if (avatar.avatar_storage_provider === "r2" && !isR2KeyForTenant(avatar.avatar_storage_key, user.tenant_id)) return reply.code(404).send({ error: "Foto não encontrada." });
+    try {
+      const object = await createMediaStorage().get({ provider: avatar.avatar_storage_provider, key: avatar.avatar_storage_key });
+      return reply.header("Content-Type", avatar.avatar_mime_type ?? "image/jpeg").header("Cache-Control", "private, max-age=3600").send(object.bytes);
+    } catch { return reply.code(404).send({ error: "Foto não encontrada." }); }
+  });
+
+  app.get("/api/media/:id/preview", async (request, reply) => {
+    const user = await deps.requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await query<MediaRow>(
+      "select id,mime_type,file_name,file_size,storage_path,storage_provider,storage_key,status,preview_storage_provider,preview_storage_key,preview_mime_type from message_media where tenant_id=$1 and id=$2", [user.tenant_id, id],
+    );
+    const media = result.rows[0];
+    if (!media?.preview_storage_provider || !media.preview_storage_key) return reply.code(404).send({ error: "Prévia não encontrada." });
+    if (media.preview_storage_provider === "r2" && !isR2KeyForTenant(media.preview_storage_key, user.tenant_id)) return reply.code(404).send({ error: "Prévia não encontrada." });
+    try {
+      const object = await createMediaStorage().get({ provider: media.preview_storage_provider, key: media.preview_storage_key });
+      return reply.header("Content-Type", media.preview_mime_type ?? "image/jpeg").header("Cache-Control", "private, max-age=86400").send(object.bytes);
+    } catch { return reply.code(404).send({ error: "Prévia não encontrada." }); }
+  });
+
   /** Serve a copia guardada. A URL assinada da Meta nunca chega ao navegador. */
   app.get("/api/media/:id/content", async (request, reply) => {
     const user = await deps.requireAuth(request, reply);
@@ -356,6 +393,7 @@ export function registerWhatsAppMediaRoutes(app: FastifyInstance, deps: MediaRou
         mediaRow?.id ?? null,
       ],
     );
+    if (mediaRow?.id) await enqueueMediaProcessing(user.tenant_id, mediaRow.id);
 
     await deps.touchConversationAfterSend(user.tenant_id, id, failed ? "failed" : "sent");
     await deps.recordEvent(

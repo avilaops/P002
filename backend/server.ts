@@ -1249,7 +1249,9 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
         or ct.company ilike ${searchParam}
         or exists (
           select 1 from messages m
-          where m.tenant_id = c.tenant_id and m.conversation_id = c.id and m.body ilike ${searchParam}
+          left join message_media media on media.id=m.media_id and media.tenant_id=m.tenant_id
+          where m.tenant_id = c.tenant_id and m.conversation_id = c.id
+            and (m.body ilike ${searchParam} or media.transcription ilike ${searchParam})
         )
       )`);
     }
@@ -1266,6 +1268,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
               c.last_message_at, c.last_customer_message_at, c.last_agent_message_at, c.created_at, c.unread_count,
               ch.provider as channel_provider,
               ct.name as contact_name, ct.phone as contact_phone, ct.email as contact_email, ct.company as contact_company,
+              case when ct.avatar_storage_key is not null then '/api/contacts/'||ct.id::text||'/avatar' else null end as contact_avatar_url,
               ch.display_name as channel_name, ch.phone_number as channel_phone, ch.status as channel_status,
               u.name as assigned_user_name,
               case
@@ -1314,7 +1317,10 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       `select m.id, m.conversation_id, m.external_id, m.direction, m.sender_name, m.sender_phone, m.body, m.message_type,
               m.status, m.error_message, m.request_id, m.media_id, m.sent_at, m.created_at,
               md.mime_type as media_mime_type, md.file_name as media_file_name, md.file_size as media_file_size,
-              md.status as media_status, md.caption as media_caption
+              md.status as media_status, md.caption as media_caption,
+              md.processing_status as media_processing_status,(md.preview_storage_key is not null) as media_preview_available,
+              md.transcription as media_transcription,md.transcription_language as media_transcription_language,
+              md.processing_error as media_processing_error
        from messages m
        left join message_media md on md.id = m.media_id
        where m.tenant_id = $1 and m.conversation_id = $2

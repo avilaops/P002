@@ -5,6 +5,7 @@ export type CrmConversation = {
   assigned_user_id: string | null
   contact_name: string | null
   contact_phone: string | null
+  contact_avatar_url?: string | null
   channel_name: string | null
   channel_phone: string | null
   channel_provider: string | null
@@ -38,6 +39,11 @@ export type CrmMessage = {
   media_file_size?: number | null
   media_status?: 'pending' | 'ready' | 'failed' | string | null
   media_caption?: string | null
+  media_processing_status?: 'pending' | 'completed' | 'failed' | string | null
+  media_preview_available?: boolean | null
+  media_transcription?: string | null
+  media_transcription_language?: string | null
+  media_processing_error?: string | null
 }
 
 export type CrmTemplate = {
@@ -228,6 +234,10 @@ export function markConversationRead(conversationId: string) {
 
 export function mediaContentUrl(mediaId: string) {
   return `/api/media/${mediaId}/content`
+}
+
+export function mediaPreviewUrl(mediaId: string) {
+  return `/api/media/${mediaId}/preview`
 }
 
 export async function sendConversationMedia(conversationId: string, file: File, caption?: string) {
