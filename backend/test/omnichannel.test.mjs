@@ -184,7 +184,7 @@ test('widget usa a origem pública HTTPS e não duplica mensagens persistidas', 
   assert.doesNotMatch(response.body, /request\.protocol/)
 })
 
-test('mensagem do chat atualiza a conversa antes de publicar a mensagem', async (t) => {
+test('mensagem do chat publica a entrada e depois reconcilia o estado persistido', async (t) => {
   const events = []
   const channel = { id: 'channel-a', tenant_id: 'tenant-a', external_id: '11111111-1111-4111-8111-111111111111', display_name: 'Site', status: 'connected', metadata: { allowedOrigins: ['https://site.example'] } }
   const app = Fastify()
@@ -199,7 +199,10 @@ test('mensagem do chat atualiza a conversa antes de publicar a mensagem', async 
       if (sql.includes("from channels where provider = 'webchat'")) return { rows: [channel], rowCount: 1 }
       if (sql.includes('from webchat_sessions')) return { rows: [{ id: 'session-a', tenant_id: 'tenant-a', channel_id: 'channel-a', contact_id: 'contact-a', conversation_id: 'conversation-a', origin: 'https://site.example' }], rowCount: 1 }
       if (sql.includes('insert into messages')) return { rows: [{ id: 'message-a', conversation_id: 'conversation-a', body: 'Olá', direction: 'inbound', sent_at: new Date().toISOString() }], rowCount: 1 }
-      if (sql.includes('update conversations')) return { rows: [{ id: 'conversation-a', unread_count: 1 }], rowCount: 1 }
+      if (sql.includes('update conversations')) {
+        assert.match(sql, /status = 'waiting'/)
+        return { rows: [{ id: 'conversation-a', status: 'waiting', unread_count: 1 }], rowCount: 1 }
+      }
       return { rows: [], rowCount: 0 }
     },
   })
@@ -212,5 +215,5 @@ test('mensagem do chat atualiza a conversa antes de publicar a mensagem', async 
     payload: { body: 'Olá', idempotencyKey: '22222222-2222-4222-8222-222222222222' },
   })
   assert.equal(response.statusCode, 201, response.body)
-  assert.deepEqual(events.map(event => event.type), ['conversation.updated', 'message.created'])
+  assert.deepEqual(events.map(event => event.type), ['message.created', 'conversation.updated'])
 })

@@ -118,7 +118,7 @@ async function ingestExternalMessage(query: Query, channel: SocialChannel, event
   )
   if (!inserted.rows[0]) return null
   const conversation = await query(
-    `update conversations set unread_count = unread_count + 1, last_message_at = $3,
+    `update conversations set status = 'waiting', unread_count = unread_count + 1, last_message_at = $3,
        last_customer_message_at = $3, updated_at = now()
      where tenant_id = $1 and id = $2
      returning id, status, unread_count, last_message_at, last_customer_message_at, updated_at`,
@@ -307,8 +307,8 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
       const saved = await ingestExternalMessage(query, channel, event)
       if (saved) {
         imported += 1
-        deps.publish({ type: 'conversation.updated', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.conversation })
         deps.publish({ type: 'message.created', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.message })
+        deps.publish({ type: 'conversation.updated', tenantId: channel.tenant_id, conversationId: saved.conversationId, data: saved.conversation })
       }
     }
     return { received: true, imported }
@@ -421,13 +421,13 @@ export function registerOmnichannelRoutes(app: FastifyInstance, deps: Dependenci
     )
     if (!saved.rows[0]) return { accepted: true, idempotent: true }
     const conversation = await query(
-      `update conversations set unread_count = unread_count + 1, last_message_at = now(),
+      `update conversations set status = 'waiting', unread_count = unread_count + 1, last_message_at = now(),
          last_customer_message_at = now(), updated_at = now() where tenant_id = $1 and id = $2
          returning id, status, unread_count, last_message_at, last_customer_message_at, updated_at`,
       [session.tenant_id, session.conversation_id],
     )
-    deps.publish({ type: 'conversation.updated', tenantId: session.tenant_id, conversationId: session.conversation_id, data: conversation.rows[0] })
     deps.publish({ type: 'message.created', tenantId: session.tenant_id, conversationId: session.conversation_id, data: saved.rows[0] })
+    deps.publish({ type: 'conversation.updated', tenantId: session.tenant_id, conversationId: session.conversation_id, data: conversation.rows[0] })
     return reply.code(201).send({ accepted: true, message: saved.rows[0] })
   })
 
