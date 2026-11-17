@@ -1,17 +1,18 @@
 import { useState } from 'react'
 import { FileText, HelpCircle, Shield, X } from 'lucide-react'
-import { createKnowledgeSource, type KnowledgeSource } from '../../lib/crm'
+import { createKnowledgeSource, updateKnowledgeSource, type KnowledgeSource } from '../../lib/crm'
 
 interface KnowledgeModalProps {
   onClose: () => void
   onCreated: (source: KnowledgeSource) => void
+  source?: KnowledgeSource
 }
 
-export default function KnowledgeModal({ onClose, onCreated }: KnowledgeModalProps) {
-  const [step, setStep] = useState<'select' | 'form'>('select')
-  const [type, setType] = useState<'faq' | 'document' | 'url' | 'guideline'>('faq')
-  const [title, setTitle] = useState('')
-  const [content, setContent] = useState('')
+export default function KnowledgeModal({ onClose, onCreated, source }: KnowledgeModalProps) {
+  const [step, setStep] = useState<'select' | 'form'>(source ? 'form' : 'select')
+  const [type, setType] = useState<'faq' | 'document' | 'url' | 'guideline'>(source?.type ?? 'faq')
+  const [title, setTitle] = useState(source?.title ?? '')
+  const [content, setContent] = useState(source?.content ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -27,11 +28,8 @@ export default function KnowledgeModal({ onClose, onCreated }: KnowledgeModalPro
     setSaving(true)
     setError('')
     try {
-      const res = await createKnowledgeSource({
-        title: title.trim(),
-        type,
-        content: content.trim(),
-      })
+      const input = { title: title.trim(), type, content: content.trim() }
+      const res = source ? await updateKnowledgeSource(source.id, input) : await createKnowledgeSource(input)
       onCreated(res.source)
       onClose()
     } catch (err: unknown) {
@@ -46,7 +44,7 @@ export default function KnowledgeModal({ onClose, onCreated }: KnowledgeModalPro
       <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 className="text-base font-bold text-slate-900">
-            {step === 'select' ? 'Adicionar Base de Conhecimento RAG' : 'Nova Fonte de Conhecimento'}
+            {source ? 'Editar fonte de conhecimento' : step === 'select' ? 'Adicionar base de conhecimento' : 'Nova fonte de conhecimento'}
           </h3>
           <button className="text-slate-400 hover:text-slate-600" onClick={onClose}>
             <X size={18} />
@@ -141,13 +139,13 @@ export default function KnowledgeModal({ onClose, onCreated }: KnowledgeModalPro
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-slate-100">
-              <button
+              {!source && <button
                 type="button"
                 className="text-xs font-semibold text-slate-500 hover:underline"
                 onClick={() => setStep('select')}
               >
                 ← Voltar
-              </button>
+              </button>}
 
               <div className="flex gap-2">
                 <button
@@ -162,7 +160,7 @@ export default function KnowledgeModal({ onClose, onCreated }: KnowledgeModalPro
                   disabled={saving}
                   className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {saving ? 'Salvando...' : 'Adicionar ao Agente IA'}
+                  {saving ? 'Salvando…' : source ? 'Salvar alterações' : 'Adicionar ao agente de IA'}
                 </button>
               </div>
             </div>

@@ -33,6 +33,7 @@ import { registerMediaRoutes } from "./routes-media.js";
 import { registerTeamRoutes } from "./routes-team.js";
 import { registerSettingsRoutes } from "./routes-settings.js";
 import { registerAccountRoutes } from "./routes-account.js";
+import { registerOmnichannelRoutes } from "./routes-omnichannel.js";
 import { signOAuthState, verifyOAuthState } from "./oauth-state.js";
 import { userRemovalBlock } from "./user-removal.js";
 import {
@@ -852,6 +853,9 @@ async function inviteUser(admin: AuthUser, target: InvitedUser, requestId?: stri
 
 export async function buildApp(options: { background?: boolean; frontendHandler?: (request: IncomingMessage, response: ServerResponse) => Promise<void> } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
+  let sendMetaMessagingText: (tenantId: string, channelExternalId: string, recipientId: string, body: string) => Promise<string> = async () => {
+    throw new Error("Meta Messaging ainda não foi inicializada.");
+  };
   renovacaoMetaLigada = options.background !== false;
   installErrorHandler(app);
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -1363,24 +1367,37 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       channel_external_id: string | null;
       channel_id: string | null;
       channel_provider: string | null;
+      contact_external_id: string | null;
     }>(
-      `select c.id, c.channel_id, ct.phone as contact_phone, ch.external_id as channel_external_id, ch.provider as channel_provider
+      `select c.id, c.channel_id, ct.phone as contact_phone, ch.external_id as channel_external_id, ch.provider as channel_provider,
+              cc.external_id as contact_external_id
        from conversations c
        left join contacts ct on ct.id = c.contact_id
        left join channels ch on ch.id = c.channel_id
+       left join lateral (
+         select external_id from channel_contacts
+          where tenant_id = c.tenant_id and channel_id = c.channel_id and contact_id = c.contact_id
+          order by updated_at desc limit 1
+       ) cc on true
        where c.tenant_id = $1 and c.id = $2`,
       [user.tenant_id, id],
     );
     const row = conversation.rows[0];
     if (!row) return reply.code(404).send({ error: "Conversa nao encontrada." });
-    if (!row.channel_external_id || !row.contact_phone) return reply.code(400).send({ error: "Conversa sem canal ou telefone valido." });
+    if (!row.channel_external_id || !row.channel_provider) return reply.code(400).send({ error: "Conversa sem canal válido." });
+    const socialProvider = row.channel_provider === "instagram" || row.channel_provider === "messenger";
+    const whatsappProvider = ["messageria", "qrcode", "evolution", "whatsapp"].includes(row.channel_provider);
+    if (whatsappProvider && !row.contact_phone) return reply.code(400).send({ error: "Conversa sem telefone válido." });
+    if (socialProvider && !row.contact_external_id) return reply.code(400).send({ error: "Conversa sem identidade externa válida." });
 
     // A Meta recusa texto livre fora da janela de 24h. Deixar seguir daria um
     // "enviado" na tela para uma mensagem que o cliente nunca recebeu — o 409
     // chega antes e a tela troca para o seletor de templates.
-    const janela = await assertSendWindow(user.tenant_id, id);
-    if (!janela.allowed) {
-      return reply.code(409).send({ error: janela.reason, code: "window_closed", windowExpiresAt: janela.expiresAt ?? null });
+    if (whatsappProvider) {
+      const janela = await assertSendWindow(user.tenant_id, id);
+      if (!janela.allowed) {
+        return reply.code(409).send({ error: janela.reason, code: "window_closed", windowExpiresAt: janela.expiresAt ?? null });
+      }
     }
 
     let externalId: string | null = null;
@@ -1395,7 +1412,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       if (!messageria?.api_key) return reply.code(400).send({ error: "Messageria nao conectada." });
       try {
         const saida = await enviarPelaMessageria(messageria, {
-          para: row.contact_phone,
+          para: row.contact_phone!,
           texto: body.body,
           idempotencia: idempotencyKey,
         });
@@ -1411,20 +1428,30 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       }
     } else if (row.channel_provider === "qrcode" || row.channel_provider === "evolution") {
       try {
-        externalId = await sendEvolutionText(user.tenant_id, row.channel_external_id, row.contact_phone, body.body);
+        externalId = await sendEvolutionText(user.tenant_id, row.channel_external_id, row.contact_phone!, body.body);
         responseMetadata = { provider: "evolution" };
       } catch {
         status = "failed";
         errorMessage = "A Evolution API não confirmou o envio. Verifique a conexão do WhatsApp Web.";
       }
-    } else {
+    } else if (socialProvider) {
+      try {
+        externalId = await sendMetaMessagingText(user.tenant_id, row.channel_external_id, row.contact_external_id!, body.body);
+        responseMetadata = { provider: row.channel_provider };
+      } catch (error) {
+        status = "failed";
+        errorMessage = error instanceof Error ? error.message.slice(0, 300) : "A Meta não confirmou o envio.";
+      }
+    } else if (row.channel_provider === "webchat") {
+      responseMetadata = { provider: "webchat" };
+    } else if (row.channel_provider === "whatsapp") {
       const { integration } = await getMetaIntegration(user.tenant_id);
       if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
 
       const messagePayload = {
         messaging_product: "whatsapp",
         recipient_type: "individual",
-        to: row.contact_phone,
+        to: row.contact_phone!,
         type: "text",
         text: { preview_url: false, body: body.body },
       };
@@ -1444,6 +1471,8 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
         externalId = graphData.messages[0].id ?? null;
         responseMetadata = { graph: graphData };
       }
+    } else {
+      return reply.code(400).send({ error: "Este canal ainda não permite resposta." });
     }
 
     const saved = await query(
@@ -2513,6 +2542,14 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
   registerMediaRoutes(app, { requireAuth, recordEvent });
   registerTeamRoutes(app, { requireAuth, recordEvent });
   registerSettingsRoutes(app, requireAuth, recordEvent);
+  sendMetaMessagingText = registerOmnichannelRoutes(app, {
+    requireAuth,
+    canManage,
+    encryptSecret,
+    decryptSecret,
+    recordEvent,
+    publish: publishRealtimeAsync,
+  }).sendMetaText;
   registerEvolutionRoutes(app, { requireAuth, canManage, upsertContact: upsertWhatsAppContact, conversation: getOrCreateConversation, publish: publishRealtimeAsync, background: options.background !== false });
   registerAccountRoutes(app, {
     requireAuth,

@@ -1,5 +1,6 @@
 import { ImapFlow, type FetchMessageObject } from "imapflow";
 import nodemailer from "nodemailer";
+import { createHash } from "node:crypto";
 import { query } from "./db.js";
 
 /**
@@ -157,7 +158,25 @@ export type MailboxMessage = {
   date: string | null;
   seen: boolean;
   preview: string;
+  messageId: string;
+  inReplyTo: string;
+  threadKey: string;
+  contactId?: string | null;
 };
+
+export function normalizeMailSubject(subject: string) {
+  let normalized = subject.trim();
+  for (let index = 0; index < 8; index += 1) {
+    const next = normalized.replace(/^\s*(re|res|fw|fwd|enc)\s*:\s*/i, '').trim();
+    if (next === normalized) break;
+    normalized = next;
+  }
+  return normalized.replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR') || '(sem assunto)';
+}
+
+export function mailThreadKey(subject: string, participant: string) {
+  return createHash('sha256').update(`${normalizeMailSubject(subject)}\n${participant.trim().toLowerCase()}`).digest('hex').slice(0, 32);
+}
 
 function addressOf(value: { name?: string; address?: string } | undefined) {
   return {
@@ -168,15 +187,19 @@ function addressOf(value: { name?: string; address?: string } | undefined) {
 
 function envelopeToMessage(message: FetchMessageObject): MailboxMessage {
   const from = addressOf(message.envelope?.from?.[0]);
+  const subject = message.envelope?.subject?.trim() || "(sem assunto)";
   return {
     uid: message.uid,
-    subject: message.envelope?.subject?.trim() || "(sem assunto)",
+    subject,
     fromName: from.name,
     fromEmail: from.email,
     to: (message.envelope?.to ?? []).map((entry) => addressOf(entry).email).filter(Boolean),
     date: message.envelope?.date ? new Date(message.envelope.date).toISOString() : null,
     seen: Boolean(message.flags?.has("\\Seen")),
     preview: "",
+    messageId: message.envelope?.messageId?.trim() ?? "",
+    inReplyTo: message.envelope?.inReplyTo?.trim() ?? "",
+    threadKey: mailThreadKey(subject, from.email),
   };
 }
 

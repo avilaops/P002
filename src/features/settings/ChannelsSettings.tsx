@@ -6,6 +6,7 @@ import type { ConnectionState } from '../../lib/connection'
 import { listChannels } from '../../lib/crm'
 import { getMailAccount } from '../../lib/mail'
 import { getMessageriaStatus } from '../../lib/messageria'
+import { getMetaMessagingStatus, getWebChatChannel } from '../../lib/omnichannel'
 import { useNavigation } from '../../lib/navigationContext'
 import { describeWhatsAppConnection } from '../../lib/whatsappConnection'
 import { SettingsFrame } from './SettingsFrame'
@@ -23,6 +24,8 @@ export function ChannelsSettings() {
   const { navigate } = useNavigation()
   const [whatsapp, setWhatsapp] = useState<ConnectionState | null>(null)
   const [mail, setMail] = useState<ConnectionState | null>(null)
+  const [social, setSocial] = useState<ConnectionState | null>(null)
+  const [webchat, setWebchat] = useState<ConnectionState | null>(null)
 
   useEffect(() => {
     let active = true
@@ -37,12 +40,18 @@ export function ChannelsSettings() {
     getMailAccount()
       .then(({ account }) => active && setMail(!account ? 'disconnected' : account.lastError ? 'error' : 'connected'))
       .catch(() => active && setMail('error'))
+    getMetaMessagingStatus()
+      .then((result) => active && setSocial(result.connected && result.channels.some((channel) => channel.status === 'connected') ? 'connected' : 'disconnected'))
+      .catch(() => active && setSocial('error'))
+    getWebChatChannel()
+      .then((result) => active && setWebchat(result.channel?.status === 'connected' ? 'connected' : 'disconnected'))
+      .catch(() => active && setWebchat('error'))
     return () => {
       active = false
     }
   }, [])
 
-  const summary = connectionSummary([whatsapp, mail, 'soon', 'soon'])
+  const summary = connectionSummary([whatsapp, mail, social, webchat])
 
   return (
     <SettingsFrame page="channels" title="Canais" description="Cada canal entrega as conversas na Caixa de entrada, com o mesmo histórico do cliente." wide>
@@ -76,10 +85,24 @@ export function ChannelsSettings() {
               />
             </li>
             <li>
-              <NavRow icon={AtSign} title="Instagram e Messenger" description="Direct e mensagens da página" trailing={<StatusBadge state="soon" />} disabled />
+              <NavRow
+                icon={AtSign}
+                title="Instagram e Messenger"
+                description="Direct e mensagens da página"
+                trailing={social ? <StatusBadge state={social} /> : <LoadingStatusBadge />}
+                actionLabel={social === 'connected' ? 'Gerenciar' : 'Conectar'}
+                onClick={() => navigate('social-channel')}
+              />
             </li>
             <li>
-              <NavRow icon={Globe} title="Chat do site" description="Um botão de conversa no seu site" trailing={<StatusBadge state="soon" />} disabled />
+              <NavRow
+                icon={Globe}
+                title="Chat do site"
+                description="Um botão de conversa no seu site"
+                trailing={webchat ? <StatusBadge state={webchat} /> : <LoadingStatusBadge />}
+                actionLabel={webchat === 'connected' ? 'Gerenciar' : 'Configurar'}
+                onClick={() => navigate('webchat-channel')}
+              />
             </li>
           </ul>
         </section>

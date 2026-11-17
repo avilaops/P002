@@ -31,6 +31,7 @@ async function fixture(t, overrides = {}) {
       assert.equal(params[0], user.tenant_id, 'toda consulta usa o tenant da sessão')
       if (sql.includes('tenant_settings')) return { rows: [{ ai_copilot_enabled: true, ai_custom_instructions: '' }] }
       if (sql.includes('knowledge_sources')) {
+        if (sql.trimStart().startsWith('update')) { records.push({ sql, params }); return { rows: [] } }
         assert.match(sql, /tenant_id\s*=\s*\$1/)
         assert.match(sql, /active\s*=\s*true/)
         assert.match(sql, /limit 3/i)
@@ -65,10 +66,12 @@ test('responde com Qwen, contexto da empresa e histórico sem permitir ações d
   assert.match(calls[0].body.messages[0].content, /Adicionar contato/)
   assert.deepEqual(calls[0].body.messages.at(-1), messages[0])
   assert.equal(calls[0].body.tools, undefined)
-  assert.equal(records.length, 1)
-  assert.ok(records[0].params.includes(user.id))
-  assert.match(records[0].sql, /'copilot'/)
+  assert.equal(records.length, 2)
+  const runRecord = records.find(record => record.sql.includes('insert into ai_runs'))
+  assert.ok(runRecord.params.includes(user.id))
+  assert.match(runRecord.sql, /'copilot'/)
   assert.ok(!JSON.stringify(records).includes(messages[0].content), 'registro não captura a conversa')
+  assert.ok(records.some(record => /update knowledge_sources/i.test(record.sql)), 'registra o uso das fontes citadas')
 })
 
 test('não aceita system, outro tenant, pergunta vazia ou histórico acima dos limites', async (t) => {

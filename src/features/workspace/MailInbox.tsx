@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Mail, RefreshCw, UserPlus, X } from 'lucide-react'
+import { Mail, RefreshCw, UserCheck, UserPlus, X } from 'lucide-react'
 import {
   ignoreSender,
   listMailMessages,
@@ -11,6 +11,7 @@ import {
   type MailSender,
 } from '../../lib/mail'
 import Topbar from '../../components/layout/Topbar'
+import { groupMailThreads } from './mailPresentation'
 
 type ContactForm = { name: string; company: string; phone: string; tags: string }
 
@@ -44,6 +45,7 @@ function MailInbox() {
   const [replyError, setReplyError] = useState('')
   const replyAttempt = useRef<{ uid: number; text: string; requestId: string } | null>(null)
   const sendingReply = useRef(false)
+  const threads = groupMailThreads(messages)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -224,18 +226,25 @@ function MailInbox() {
               </p>
             )}
             <div className="max-h-[60vh] divide-y divide-slate-100 overflow-auto">
-              {messages.map((item) => (
+              {threads.map((thread) => {
+                const item = thread.latest
+                return (
                 <button
-                  key={item.uid}
+                  key={thread.key}
                   className={`block w-full px-4 py-3 text-left hover:bg-slate-50 ${selected?.message.uid === item.uid ? 'bg-blue-50' : ''}`}
                   onClick={() => void openMessage(item.uid)}
                   disabled={busy.startsWith('msg-') || replyState === 'sending'}
                 >
-                  <p className="truncate text-sm font-medium">{item.fromName || item.fromEmail}</p>
-                  <p className="truncate text-sm text-slate-600">{item.subject}</p>
-                  <p className="text-xs text-slate-400">{formatDate(item.date)}</p>
+                  <span className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{item.fromName || item.fromEmail}</span>
+                      <span className="block truncate text-sm text-slate-600">{item.subject}</span>
+                      <span className="text-xs text-slate-400">{formatDate(item.date)}{thread.count > 1 ? ` • ${thread.count} mensagens` : ''}</span>
+                    </span>
+                    {item.contactId && <UserCheck size={16} className="mt-0.5 shrink-0 text-emerald-600" aria-label="Contato cadastrado" />}
+                  </span>
                 </button>
-              ))}
+              )})}
             </div>
           </section>
 

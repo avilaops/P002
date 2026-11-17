@@ -25,6 +25,8 @@ export { KnowledgeSettings } from '../../features/settings/KnowledgeSettings'
 export { default as MailSettings } from '../../features/settings/MailSettings'
 export { UsersSettings } from '../../features/settings/UsersSettings'
 export { WhatsAppChannelPage } from '../../features/settings/WhatsAppChannelPage'
+export { default as SocialChannelsPage } from '../../features/settings/SocialChannelsPage'
+export { default as WebChatChannelPage } from '../../features/settings/WebChatChannelPage'
 export { AiSettings, GeneralSettings, ServiceRulesSettings } from '../../features/settings/WorkspaceSettings'
 
 export function ConversationsScreen() {

@@ -238,6 +238,23 @@ export function registerSettingsRoutes(
     return { sources: result.rows }
   })
 
+  // Mostra exatamente quais fontes a busca lexical entregaria ao agente.
+  app.get('/api/knowledge/search', async (request, reply) => {
+    const user = await requireAuth(request, reply)
+    if (!user) return
+    const { q } = z.object({ q: z.string().trim().min(2).max(500) }).parse(request.query)
+    const result = await query(
+      `select id, title, type, left(content, 600) as content,
+              ts_rank_cd(to_tsvector('portuguese', title || ' ' || content), plainto_tsquery('portuguese', $2)) as rank
+         from knowledge_sources
+        where tenant_id = $1 and active = true
+          and to_tsvector('portuguese', title || ' ' || content) @@ plainto_tsquery('portuguese', $2)
+        order by rank desc, updated_at desc limit 10`,
+      [user.tenant_id, q],
+    )
+    return { sources: result.rows }
+  })
+
   // ── POST /api/knowledge ─────────────────────────────────────────────────────
   app.post('/api/knowledge', async (request, reply) => {
     const user = await requireAuth(request, reply)

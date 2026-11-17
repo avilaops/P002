@@ -149,6 +149,13 @@ ${knowledge || "Nenhuma fonte pertinente encontrada. Responda como ajuda geral, 
            values ($1, $2, 'copilot', $3, 'ok', $4, $5, $6)`,
           [identity.tenant_id, identity.id, provider.model, result.inputTokens, result.outputTokens, Date.now() - start],
         ), signal);
+      if (sources.length > 0) {
+        await abortable(() => database(
+          `update knowledge_sources set times_used = times_used + 1
+            where tenant_id = $1 and id = any($2::uuid[])`,
+          [identity.tenant_id, sources.map(source => source.id)],
+        ), signal);
+      }
       return { message: { role: "assistant", content: result.content }, sources: sources.map(({ id, title }) => ({ id, title })) };
     } catch (failure) {
       const cancelled = disconnected.signal.aborted;

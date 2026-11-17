@@ -148,6 +148,8 @@ export const settingsItems: SettingsItem[] = [
 export const settingsChildren: Partial<Record<SettingsPage, { parent: SettingsPage; label: string }>> = {
   'whatsapp-channel': { parent: 'channels', label: 'WhatsApp' },
   'mail-settings': { parent: 'channels', label: 'E-mail' },
+  'social-channel': { parent: 'channels', label: 'Instagram e Messenger' },
+  'webchat-channel': { parent: 'channels', label: 'Chat do site' },
   'chat-settings': { parent: 'channels', label: 'Regras de atendimento' },
 }
 

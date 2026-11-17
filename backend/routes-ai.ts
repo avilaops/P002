@@ -4,11 +4,13 @@ import {
   AiError,
   CAMPANHA_SCHEMA,
   CATALOGO_SCHEMA,
+  CONVERSATION_REPLY_SCHEMA,
   TRIAGEM_SCHEMA,
   executar,
   loadAiConfig,
   promptCampanha,
   promptCatalogo,
+  promptConversationReply,
   promptTriagem,
   readAiConfigView,
   saveAiConfig,
@@ -121,6 +123,58 @@ export function registerAiRoutes(app: FastifyInstance, deps: Dependencies) {
       [user.tenant_id],
     );
     return { runs: resultado.rows };
+  });
+
+  // Rascunho assistido para o inbox. A pessoa revisa e envia; o modelo não ganha ferramenta de escrita.
+  app.post("/api/ai/conversations/:id/suggest", async (request, reply) => {
+    const contexto = await exigirConfig(request, reply);
+    if (!contexto) return;
+    const { user, config } = contexto;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const conversation = await query<{ id: string }>("select id from conversations where tenant_id = $1 and id = $2", [user.tenant_id, id]);
+    if (!conversation.rows[0]) return reply.code(404).send({ error: "Conversa não encontrada." });
+    const messages = await query<{ direction: string; sender_name: string | null; body: string | null }>(
+      `select direction, sender_name, body from messages
+        where tenant_id = $1 and conversation_id = $2 and body is not null and body <> ''
+        order by sent_at desc limit 16`,
+      [user.tenant_id, id],
+    );
+    const ordered = messages.rows.reverse();
+    if (ordered.length === 0) return reply.code(409).send({ error: "A conversa ainda não tem texto para analisar." });
+    const lastCustomerText = [...ordered].reverse().find((item) => item.direction === "inbound")?.body ?? ordered.at(-1)?.body ?? "";
+    const [settings, sources] = await Promise.all([
+      query<{ ai_tone: string; ai_custom_instructions: string | null }>("select ai_tone, ai_custom_instructions from tenant_settings where tenant_id = $1", [user.tenant_id]),
+      query<{ id: string; title: string; content: string }>(
+        `select id, left(title, 200) as title, left(content, 1200) as content from knowledge_sources
+          where tenant_id = $1 and active = true
+            and to_tsvector('portuguese', title || ' ' || content) @@ plainto_tsquery('portuguese', $2)
+          order by updated_at desc limit 4`,
+        [user.tenant_id, lastCustomerText],
+      ),
+    ]);
+    const knowledge = sources.rows.map((source) => `[${source.title}]\n${source.content}`).join("\n\n").slice(0, 4000);
+    try {
+      const result = await executar(
+        user.tenant_id,
+        user.id,
+        config,
+        "reply_suggestion",
+        promptConversationReply({
+          tone: settings.rows[0]?.ai_tone ?? "consultivo",
+          instructions: settings.rows[0]?.ai_custom_instructions ?? "",
+          history: ordered.map((item) => `${item.direction === "inbound" ? "Cliente" : item.sender_name || "Atendente"}: ${item.body}`),
+          knowledge,
+        }),
+        CONVERSATION_REPLY_SCHEMA,
+      );
+      const suggestion = texto(result.reply, 4000);
+      if (!suggestion) return reply.code(502).send({ error: "O agente devolveu um rascunho vazio." });
+      if (sources.rows.length) await query("update knowledge_sources set times_used = times_used + 1 where tenant_id = $1 and id = any($2::uuid[])", [user.tenant_id, sources.rows.map((source) => source.id)]);
+      return { suggestion, sources: sources.rows.map(({ id: sourceId, title }) => ({ id: sourceId, title })) };
+    } catch (error) {
+      if (error instanceof AiError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
   });
 
   // ── Triagem da caixa de entrada ──────────────────────────────────────────

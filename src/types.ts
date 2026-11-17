@@ -27,6 +27,8 @@ export type SettingsPage =
   | 'channels'
   | 'whatsapp-channel'
   | 'mail-settings'
+  | 'social-channel'
+  | 'webchat-channel'
   | 'chat-settings'
   | 'integrations'
   | 'ai-settings'

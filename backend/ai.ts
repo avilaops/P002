@@ -337,6 +337,31 @@ export const CAMPANHA_SCHEMA = {
   },
 } as const;
 
+export const CONVERSATION_REPLY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reply"],
+  properties: { reply: { type: "string" } },
+} as const;
+
+export function promptConversationReply(input: { tone: string; instructions: string; history: string[]; knowledge: string }): Mensagem[] {
+  return [
+    {
+      role: "system",
+      content: `${VOZ}
+
+Você prepara um rascunho de resposta para um atendente. Você não envia mensagens nem executa ações.
+Tom solicitado: ${input.tone || "consultivo"}.
+Orientações da empresa: ${input.instructions || "Seja objetivo e cordial."}
+
+Use somente fatos sustentados pela conversa e pelo conhecimento abaixo. Se faltar dado, faça uma pergunta curta em vez de inventar.
+Conhecimento:
+${input.knowledge || "Nenhuma fonte pertinente."}`,
+    },
+    { role: "user", content: input.history.join("\n").slice(-6000) },
+  ];
+}
+
 export function promptCampanha(briefing: string, publico: string): Mensagem[] {
   return [
     {

@@ -1,10 +1,10 @@
-import { BookOpen, FileText, HelpCircle, Plus, Shield, Trash2 } from 'lucide-react'
+import { BookOpen, FileText, HelpCircle, Pencil, Plus, Search, Shield, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import KnowledgeModal from '../../components/modals/KnowledgeModal'
 import { Notice } from '../../components/ui/Form'
 import { EmptyState } from '../../components/ui/Rows'
 import { ToneBadge } from '../../components/ui/StatusBadge'
-import { deleteKnowledgeSource, listKnowledgeSources, updateKnowledgeSource, type KnowledgeSource } from '../../lib/crm'
+import { deleteKnowledgeSource, listKnowledgeSources, searchKnowledgeSources, updateKnowledgeSource, type KnowledgeSource } from '../../lib/crm'
 import { buttonClass } from '../../lib/ui'
 import { SettingsFrame } from './SettingsFrame'
 
@@ -21,6 +21,10 @@ export function KnowledgeSettings() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<KnowledgeSource | null>(null)
+  const [query, setQuery] = useState('')
+  const [testResults, setTestResults] = useState<Array<{ id: string; title: string; content: string }>>([])
+  const [searching, setSearching] = useState(false)
   const [version, setVersion] = useState(0)
   const reload = () => setVersion((value) => value + 1)
 
@@ -54,6 +58,24 @@ export function KnowledgeSettings() {
     }
   }
 
+  async function testSearch() {
+    if (query.trim().length < 2) return
+    setSearching(true)
+    try {
+      const result = await searchKnowledgeSources(query.trim())
+      setTestResults(result.sources)
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Não foi possível testar a busca.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const visibleSources = query.trim()
+    ? sources.filter((source) => `${source.title} ${source.content}`.toLocaleLowerCase('pt-BR').includes(query.trim().toLocaleLowerCase('pt-BR')))
+    : sources
+
   return (
     <SettingsFrame
       page="knowledge"
@@ -68,6 +90,16 @@ export function KnowledgeSettings() {
     >
       <div className="space-y-4">
         {error && <Notice tone="danger">{error}</Notice>}
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <label className="text-sm font-medium text-slate-800" htmlFor="knowledge-search">Buscar e testar contexto</label>
+          <p className="mt-1 text-xs text-slate-500">A busca de teste usa o mesmo índice lexical e o mesmo isolamento por empresa do agente.</p>
+          <div className="mt-3 flex gap-2">
+            <input id="knowledge-search" type="search" className="input" value={query} placeholder="Ex.: prazo de implantação" onChange={(event) => { setQuery(event.target.value); setTestResults([]) }} />
+            <button type="button" className={buttonClass.secondary} disabled={searching || query.trim().length < 2} onClick={() => void testSearch()}><Search size={16} />{searching ? 'Buscando…' : 'Testar'}</button>
+          </div>
+          {testResults.length > 0 && <div className="mt-3 space-y-2" role="status">{testResults.map((source) => <article key={source.id} className="rounded-lg bg-slate-50 p-3"><strong className="text-sm text-slate-900">{source.title}</strong><p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{source.content}</p></article>)}</div>}
+          {query.trim().length >= 2 && !searching && testResults.length === 0 && <p className="mt-3 text-xs text-slate-500">Use “Testar” para ver o contexto que seria entregue ao agente.</p>}
+        </section>
         <section className="rounded-xl border border-slate-200 bg-white">
           {loading && <p className="px-4 py-6 text-sm text-slate-500">Carregando…</p>}
           {!loading && sources.length === 0 && (
@@ -79,7 +111,7 @@ export function KnowledgeSettings() {
             />
           )}
           <ul className="divide-y divide-slate-100">
-            {sources.map((source) => {
+            {visibleSources.map((source) => {
               const meta = typeLabels[source.type] ?? typeLabels.faq
               const Icon = meta.icon
               return (
@@ -97,6 +129,7 @@ export function KnowledgeSettings() {
                   <button type="button" className={buttonClass.ghost} onClick={() => toggle(source)}>
                     {source.active ? 'Pausar' : 'Ativar'}
                   </button>
+                  <button type="button" className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800" aria-label={`Editar ${source.title}`} onClick={() => setEditing(source)}><Pencil size={17} aria-hidden="true" /></button>
                   <button
                     type="button"
                     className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600"
@@ -112,11 +145,13 @@ export function KnowledgeSettings() {
         </section>
       </div>
 
-      {adding && (
+      {(adding || editing) && (
         <KnowledgeModal
-          onClose={() => setAdding(false)}
+          source={editing ?? undefined}
+          onClose={() => { setAdding(false); setEditing(null) }}
           onCreated={() => {
             setAdding(false)
+            setEditing(null)
             reload()
           }}
         />

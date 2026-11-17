@@ -14,6 +14,8 @@ test('endereço conhecido abre a própria página, sem redirecionar', () => {
     redirected: false,
   })
   assert.equal(parseHash('#/leads/pipeline').route.page, 'pipeline')
+  assert.equal(parseHash('#/settings/channels/social/').route.page, 'social-channel')
+  assert.equal(parseHash('#/settings/channels/site-chat/').route.page, 'webchat-channel')
   assert.equal(parseHash('').route.page, 'home')
 })
 

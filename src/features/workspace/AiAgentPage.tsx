@@ -243,7 +243,7 @@ function AiAgentPage() {
             <button
               className="flex items-center gap-2 rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               onClick={() => void analisar('triagem')}
-              disabled={busy === 'triagem' || !config?.hasKey}
+              disabled={busy === 'triagem' || !config || (!config.hasKey && config.provider !== 'qwen')}
             >
               <Wand2 size={14} /> {busy === 'triagem' ? 'Analisando…' : 'Analisar 10 remetentes'}
             </button>
@@ -258,7 +258,7 @@ function AiAgentPage() {
             <button
               className="flex items-center gap-2 rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               onClick={() => void analisar('catalogo')}
-              disabled={busy === 'catalogo' || !config?.hasKey}
+              disabled={busy === 'catalogo' || !config || (!config.hasKey && config.provider !== 'qwen')}
             >
               <Wand2 size={14} /> {busy === 'catalogo' ? 'Analisando…' : 'Catalogar 10 contatos'}
             </button>

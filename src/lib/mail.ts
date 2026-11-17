@@ -26,6 +26,8 @@ export type MailMessage = {
   to: string[]
   date: string | null
   seen: boolean
+  threadKey: string
+  contactId: string | null
 }
 
 export type MailSender = {

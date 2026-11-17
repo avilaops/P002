@@ -750,6 +750,10 @@ export function listKnowledgeSources() {
   return api<{ sources: KnowledgeSource[] }>('/api/knowledge')
 }
 
+export function searchKnowledgeSources(query: string) {
+  return api<{ sources: Array<Pick<KnowledgeSource, 'id' | 'title' | 'type' | 'content'> & { rank: number }> }>(`/api/knowledge/search?q=${encodeURIComponent(query)}`)
+}
+
 export function createKnowledgeSource(input: { title: string; type: string; content: string }) {
   return api<{ source: KnowledgeSource }>('/api/knowledge', {
     method: 'POST',

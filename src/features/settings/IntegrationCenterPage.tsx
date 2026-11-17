@@ -4,11 +4,12 @@ import { FormField, Notice, ToggleRow } from '../../components/ui/Form'
 import { Sheet } from '../../components/ui/Sheet'
 import { LoadingStatusBadge, StatusBadge } from '../../components/ui/StatusBadge'
 import type { ConnectionState } from '../../lib/connection'
-import { ApiError } from '../../lib/crm'
+import { ApiError, listAutomations } from '../../lib/crm'
 import { disconnectGoogleIntegration, getGoogleAuthUrl, getGoogleIntegrationStatus } from '../../lib/googleCalendar'
 import { connectErp, disconnectErp, getErpStatus, type ErpStatus } from '../../lib/integrations'
 import { getMessageriaStatus } from '../../lib/messageria'
 import { useNavigation } from '../../lib/navigationContext'
+import { siteUrl } from '../../lib/seo'
 import { buttonClass } from '../../lib/ui'
 import type { Page } from '../../types'
 import { SettingsFrame } from './SettingsFrame'
@@ -45,15 +46,15 @@ export default function IntegrationCenterPage() {
   const [threads, setThreads] = useState<ThreadsStatus | null>(null)
   const [threadsError, setThreadsError] = useState('')
   const [threadsOpen, setThreadsOpen] = useState(false)
-  const [loadStates, setLoadStates] = useState<Record<'messageria' | 'erp' | 'google', ConnectionState | null>>({ messageria: null, erp: null, google: null })
+  const [loadStates, setLoadStates] = useState<Record<'messageria' | 'erp' | 'google' | 'n8n', ConnectionState | null>>({ messageria: null, erp: null, google: null, n8n: null })
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null)
   const [version, setVersion] = useState(0)
   const reload = () => setVersion((value) => value + 1)
 
   useEffect(() => {
     let active = true
-    Promise.allSettled([getMessageriaStatus(), getErpStatus(), getGoogleIntegrationStatus(), getThreadsStatus()]).then(
-      ([status, erpStatus, googleStatus, threadsStatus]) => {
+    Promise.allSettled([getMessageriaStatus(), getErpStatus(), getGoogleIntegrationStatus(), getThreadsStatus(), listAutomations()]).then(
+      ([status, erpStatus, googleStatus, threadsStatus, automationsStatus]) => {
         if (!active) return
         setErp(erpStatus.status === 'fulfilled' ? erpStatus.value : null)
         setGoogle(googleStatus.status === 'fulfilled' ? googleStatus.value : null)
@@ -61,6 +62,7 @@ export default function IntegrationCenterPage() {
           messageria: connectionStateFromSettled(status, (value) => !value.connected ? 'disconnected' : value.erro ? 'error' : 'connected'),
           erp: connectionStateFromSettled(erpStatus, (value) => value.connected ? 'connected' : 'disconnected'),
           google: connectionStateFromSettled(googleStatus, (value) => value.connected ? 'connected' : 'disconnected'),
+          n8n: connectionStateFromSettled(automationsStatus, (value) => value.automations.some((rule) => rule.active && rule.action_type === 'n8n_webhook') ? 'connected' : 'disconnected'),
         })
         setThreads(threadsStatus.status === 'fulfilled' ? threadsStatus.value : null)
         setThreadsError(threadsStatus.status === 'rejected' ? (threadsStatus.reason instanceof Error ? threadsStatus.reason.message : 'Threads indisponível.') : '')
@@ -127,8 +129,8 @@ export default function IntegrationCenterPage() {
     {
       ...definition('n8n'),
       icon: Workflow,
-      state: 'disconnected',
-      stateLabel: definition('n8n').unavailableLabel,
+      state: loadStates.n8n,
+      stateLabel: loadStates.n8n === 'connected' ? 'Automação ativa' : definition('n8n').unavailableLabel,
       onOpen: go('automations'),
       actionLabel: definition('n8n').action,
     },
@@ -210,7 +212,7 @@ function ErpSheet({ open, status, onClose, onChanged }: { open: boolean; status:
   const [form, setForm] = useState({ baseUrl: 'https://erp.avilaops.com', apiKey: '', webhookSecret: '', erpTenantId: '', createMissingContacts: true, autoWinLeadOnOrder: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const webhookUrl = `${window.location.origin}/api/integrations/erp/webhook`
+  const webhookUrl = `${siteUrl}/api/integrations/erp/webhook`
 
   async function submit(event: FormEvent) {
     event.preventDefault()

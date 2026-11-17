@@ -182,8 +182,16 @@ export function registerMailRoutes(app: FastifyInstance, deps: Dependencies) {
     try {
       const result = await listMailbox(account, filters);
       await rememberSenders(user.tenant_id, result.messages, [account.user, account.fromEmail]);
+      const senders = result.messages.map((message) => message.fromEmail).filter(Boolean);
+      const contacts = senders.length
+        ? await query<{ email: string; contact_id: string | null }>(
+            `select email, contact_id from mail_senders where tenant_id = $1 and email = any($2::text[])`,
+            [user.tenant_id, senders],
+          )
+        : { rows: [] };
+      const contactByEmail = new Map(contacts.rows.map((item) => [item.email, item.contact_id]));
       await recordMailError(user.tenant_id, "");
-      return result;
+      return { ...result, messages: result.messages.map((message) => ({ ...message, contactId: contactByEmail.get(message.fromEmail) ?? null })) };
     } catch (error) {
       const detail = describeError(error);
       await recordMailError(user.tenant_id, detail);

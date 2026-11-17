@@ -12,12 +12,13 @@ import { hasConnectedWhatsApp } from '../../lib/activation'
 import { formatPhoneBR } from '../../lib/format'
 import { initials, useSession } from '../../lib/session'
 import { buttonClass } from '../../lib/ui'
+import { suggestConversationReply } from '../../lib/ai'
 import { EXPANDED_QUERY, useMediaQuery } from '../../lib/useMediaQuery'
 import { ImportContactsSheet } from '../../components/contacts/ImportContactsSheet'
 import CreateLeadModal from '../../components/modals/CreateLeadModal'
 import ContactDetailDrawer from '../../components/drawers/ContactDetailDrawer'
 import LeadDetailDrawer from '../../components/drawers/LeadDetailDrawer'
-import { AlertCircle, Archive, Check, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, FileUp, LoaderCircle, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Smile, Trash2, UserRound, X } from 'lucide-react'
+import { AlertCircle, Archive, Check, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, FileUp, LoaderCircle, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Smile, Sparkles, Trash2, UserRound, X } from 'lucide-react'
 import { createGoogleCalendarUrl } from '../../lib/googleCalendar'
 import {
   ApiError,
@@ -96,6 +97,7 @@ function ChatInbox({
   const [unreadTotal, setUnreadTotal] = useState(0)
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [creatingLead, setCreatingLead] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -375,6 +377,20 @@ function ChatInbox({
       }
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleSuggestReply() {
+    if (!selected || suggesting) return
+    setSuggesting(true)
+    setError('')
+    try {
+      const result = await suggestConversationReply(selected.id)
+      setReply(result.suggestion)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Não foi possível preparar um rascunho.')
+    } finally {
+      setSuggesting(false)
     }
   }
 
@@ -687,7 +703,7 @@ function ChatInbox({
                         event.preventDefault()
                         if (!sending && reply.trim()) void handleSend()
                       }}
-                      placeholder="Responder pelo WhatsApp…"
+                      placeholder={`Responder pelo ${channelLabel(selected.channel_provider)}…`}
                     />
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -709,6 +725,10 @@ function ChatInbox({
                         </button>
                         <button type="button" className={actionClass} aria-label="Adicionar emoji" title="Adicionar emoji" onClick={() => setReply((value) => `${value}${value && !value.endsWith(' ') ? ' ' : ''}🙂`)}>
                           <Smile size={16} aria-hidden="true" />
+                        </button>
+                        <button type="button" className={actionClass} disabled={suggesting} onClick={() => void handleSuggestReply()} title="Preparar rascunho com o agente de IA">
+                          {suggesting ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+                          <span className="max-medium:sr-only">{suggesting ? 'Preparando…' : 'Sugerir resposta'}</span>
                         </button>
                         {officialWindow && (
                           <button type="button" className={actionClass} onClick={loadTemplates}>
@@ -808,6 +828,16 @@ function MessageBubble({ message }: { message: CrmMessage }) {
       </div>
     </div>
   )
+}
+
+function channelLabel(provider: string | null | undefined) {
+  const labels: Record<string, string> = {
+    instagram: 'Instagram',
+    messenger: 'Messenger',
+    webchat: 'chat do site',
+    mail: 'e-mail',
+  }
+  return labels[provider ?? ''] ?? 'WhatsApp'
 }
 
 function MessageStatusIcon({ status }: { status: ReturnType<typeof messageStatusMeta>['icon'] }) {

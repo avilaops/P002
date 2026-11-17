@@ -76,6 +76,10 @@ export function testAi() {
   return api<{ check: { ok: boolean; detail: string } }>('/api/ai/test', json({}))
 }
 
+export function suggestConversationReply(conversationId: string) {
+  return api<{ suggestion: string; sources: Array<{ id: string; title: string }> }>(`/api/ai/conversations/${conversationId}/suggest`, json({}))
+}
+
 export function listAiRuns() {
   return api<{ runs: AiRun[] }>('/api/ai/runs')
 }

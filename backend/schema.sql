@@ -725,6 +725,41 @@ create table if not exists knowledge_sources (
 
 create index if not exists knowledge_sources_tenant_idx on knowledge_sources(tenant_id, active);
 
+-- Identidades de pessoas em canais sem telefone, como Instagram, Messenger e chat do site.
+create table if not exists channel_contacts (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  channel_id uuid not null references channels(id) on delete cascade,
+  contact_id uuid not null references contacts(id) on delete cascade,
+  external_id text not null,
+  display_name text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, channel_id, external_id)
+);
+
+create index if not exists channel_contacts_contact_idx on channel_contacts(tenant_id, contact_id);
+
+-- Sessões públicas do widget guardam somente o hash do segredo entregue ao visitante.
+create table if not exists webchat_sessions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  channel_id uuid not null references channels(id) on delete cascade,
+  contact_id uuid not null references contacts(id) on delete cascade,
+  conversation_id uuid not null references conversations(id) on delete cascade,
+  token_hash text not null unique,
+  visitor_name text,
+  visitor_email text,
+  origin text not null,
+  last_seen_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '30 days'),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists webchat_sessions_channel_idx on webchat_sessions(tenant_id, channel_id, last_seen_at desc);
+
 
 
 -- CRM core, 2026-09-28: additive and compatible with the previous image.
@@ -786,6 +821,16 @@ drop trigger if exists crm_tenant_messages_conversation_id on messages;
 create trigger crm_tenant_messages_conversation_id before insert or update on messages for each row execute function crm_check_tenant_link('conversation_id', 'conversations');
 drop trigger if exists crm_tenant_events_actor_user_id on events;
 create trigger crm_tenant_events_actor_user_id before insert or update on events for each row execute function crm_check_tenant_link('actor_user_id', 'users');
+drop trigger if exists crm_tenant_channel_contacts_channel_id on channel_contacts;
+create trigger crm_tenant_channel_contacts_channel_id before insert or update on channel_contacts for each row execute function crm_check_tenant_link('channel_id', 'channels');
+drop trigger if exists crm_tenant_channel_contacts_contact_id on channel_contacts;
+create trigger crm_tenant_channel_contacts_contact_id before insert or update on channel_contacts for each row execute function crm_check_tenant_link('contact_id', 'contacts');
+drop trigger if exists crm_tenant_webchat_sessions_channel_id on webchat_sessions;
+create trigger crm_tenant_webchat_sessions_channel_id before insert or update on webchat_sessions for each row execute function crm_check_tenant_link('channel_id', 'channels');
+drop trigger if exists crm_tenant_webchat_sessions_contact_id on webchat_sessions;
+create trigger crm_tenant_webchat_sessions_contact_id before insert or update on webchat_sessions for each row execute function crm_check_tenant_link('contact_id', 'contacts');
+drop trigger if exists crm_tenant_webchat_sessions_conversation_id on webchat_sessions;
+create trigger crm_tenant_webchat_sessions_conversation_id before insert or update on webchat_sessions for each row execute function crm_check_tenant_link('conversation_id', 'conversations');
 
 create or replace function crm_check_lead_stage() returns trigger language plpgsql as $$
 declare field text; required text[];
