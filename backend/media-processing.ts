@@ -130,8 +130,17 @@ export async function processMediaJob(job: MediaJob) {
 
     let transcript: { text: string; language: string | null } | null = null;
     if (TRANSCRIBABLE.test(job.mime_type) && process.env.TRANSCRIPTION_BASE_URL) {
-      await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", audioPath]);
-      transcript = await transcribe(audioPath);
+      let hasAudioStream = true;
+      try {
+        await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", audioPath]);
+      } catch (error) {
+        // Vídeos sem faixa de áudio continuam válidos: entregamos o preview e
+        // apenas omitimos a transcrição. Um arquivo declarado como áudio sem
+        // stream, por outro lado, é mídia inválida e deve entrar no retry.
+        if (!job.mime_type.startsWith("video/")) throw error;
+        hasAudioStream = false;
+      }
+      if (hasAudioStream) transcript = await transcribe(audioPath);
     }
 
     await transaction(async () => {
