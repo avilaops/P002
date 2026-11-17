@@ -5,7 +5,9 @@ import {
   contactSecondaryLabel,
   composerSubmitIntent,
   groupMessagesByDay,
+  INBOX_RECONCILIATION_MS,
   messageStatusMeta,
+  shouldReconcileInbox,
 } from '../../src/features/workspace/inboxPresentation'
 import type { CrmConversation, CrmMessage } from '../../src/lib/crm'
 
@@ -77,4 +79,11 @@ test('Enter envia e Shift Enter preserva quebra de linha', () => {
   assert.equal(composerSubmitIntent({ key: 'Enter', shiftKey: true, isComposing: false }), false)
   assert.equal(composerSubmitIntent({ key: 'Enter', shiftKey: false, isComposing: true }), false)
   assert.equal(composerSubmitIntent({ key: 'a', shiftKey: false, isComposing: false }), false)
+})
+
+test('reconciliação automática roda somente com a caixa visível e sem consulta pendente', () => {
+  assert.equal(INBOX_RECONCILIATION_MS, 10_000)
+  assert.equal(shouldReconcileInbox('visible', false), true)
+  assert.equal(shouldReconcileInbox('visible', true), false)
+  assert.equal(shouldReconcileInbox('hidden', false), false)
 })

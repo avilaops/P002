@@ -4,6 +4,27 @@
   "members": [],
   "tasks": [
     {
+      "id": "INBOX-REALTIME-001",
+      "title": "Reconciliar automaticamente a caixa de entrada",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Manter lista e conversa aberta atualizadas mesmo após perda ou reconexão do fluxo SSE.",
+      "criteriosAceite": [
+        "Eventos SSE continuam atualizando a caixa imediatamente",
+        "Lista e conversa aberta são reconciliadas silenciosamente a cada 10 segundos",
+        "A reconciliação pausa com a aba oculta e executa ao retornar",
+        "Consultas concorrentes são evitadas",
+        "Tipos, lint, testes e build aprovados"
+      ],
+      "evidencias": [
+        "Importador Evolution de produção verificado ativo em ciclos de 15 segundos",
+        "src/features/workspace/WorkspacePages.tsx",
+        "test/web/inbox-presentation.test.ts",
+        "Typecheck, lint sem erros, 83 testes web, 128 testes backend, 4 testes CLI e build aprovados"
+      ],
+      "ambiente": "correção validada localmente; publicação em produção pendente"
+    },
+    {
       "id": "WHATSAPP-MEDIA-001",
       "title": "Aproximar a caixa de entrada do WhatsApp com mídia processada",
       "status": "concluido",

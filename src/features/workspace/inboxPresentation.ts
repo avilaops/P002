@@ -9,6 +9,12 @@ export type MessageDayGroup = {
   messages: CrmMessage[]
 }
 
+export const INBOX_RECONCILIATION_MS = 10_000
+
+export function shouldReconcileInbox(visibilityState: DocumentVisibilityState, pending: boolean) {
+  return visibilityState === 'visible' && !pending
+}
+
 function humanPhone(value: string | null | undefined) {
   const phone = value?.trim() ?? ''
   if (!phone || phone.includes('@') || !/\d/.test(phone)) return ''

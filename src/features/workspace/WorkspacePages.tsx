@@ -60,7 +60,7 @@ import {
   type PipelineStage,
 } from '../../lib/crm'
 import { useRealtime } from '../../lib/realtime'
-import { composerSubmitIntent, contactLabel, contactSecondaryLabel, groupMessagesByDay, messageStatusMeta } from './inboxPresentation'
+import { composerSubmitIntent, contactLabel, contactSecondaryLabel, groupMessagesByDay, INBOX_RECONCILIATION_MS, messageStatusMeta, shouldReconcileInbox } from './inboxPresentation'
 
 /**
  * Caixa de entrada.
@@ -118,6 +118,7 @@ function ChatInbox({
   selectedIdRef.current = selectedId
   const conversationsRef = useRef<CrmConversation[]>([])
   const refreshTimer = useRef<number | null>(null)
+  const reconciliationPending = useRef(false)
   // Abriu a conversa tocando na lista: o Voltar desfaz esse passo do
   // histórico. Quem chegou por link volta para a lista sem sair do CRM.
   const openedFromList = useRef(false)
@@ -168,6 +169,48 @@ function ChatInbox({
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
     }
   }, [])
+
+  // SSE entrega a mudanca imediatamente, mas nao e um livro-caixa: uma troca
+  // de rede, suspensao do celular ou proxy pode fazer o navegador perder um
+  // evento antes da reconexao. Confirme periodicamente o estado persistido e
+  // tambem assim que a pessoa voltar para a aba, sem piscar o loading da tela.
+  useEffect(() => {
+    let active = true
+    const reconcile = async () => {
+      if (!shouldReconcileInbox(document.visibilityState, reconciliationPending.current)) return
+      reconciliationPending.current = true
+      try {
+        const [conversationData, messageData] = await Promise.all([
+          listConversations(filters),
+          selectedId ? listConversationMessages(selectedId) : Promise.resolve(null),
+        ])
+        if (!active) return
+        setConversations(conversationData.conversations)
+        setTotal(conversationData.pagination.total)
+        setUnreadTotal(conversationData.unread?.messages ?? 0)
+        setAutoId((current) => current && conversationData.conversations.some((item) => item.id === current)
+          ? current
+          : conversationData.conversations[0]?.id ?? null)
+        if (messageData && selectedId === selectedIdRef.current) setMessages(messageData.messages)
+        setError('')
+      } catch {
+        // O SSE pode continuar funcionando mesmo se uma conferencia falhar.
+        // A proxima rodada tenta novamente sem substituir a tela por um erro.
+      } finally {
+        reconciliationPending.current = false
+      }
+    }
+    const timer = window.setInterval(() => void reconcile(), INBOX_RECONCILIATION_MS)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void reconcile()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [filters, selectedId])
 
   useEffect(() => {
     if (!selectedId) {
