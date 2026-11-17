@@ -67,6 +67,7 @@ services:
     container_name: crm-avilaops-com-whisper
     restart: unless-stopped
     init: true
+    command: ["uvicorn", "crm_whisper_api:app", "--host", "0.0.0.0", "--port", "8100"]
     environment:
       WHISPER_MODEL: small
       WHISPER_DEVICE: cpu
@@ -77,6 +78,7 @@ services:
     networks: [media]
     volumes:
       - whisper-cache:/home/transcricao/.cache
+      - ./infra/crm_whisper_api.py:/opt/crm-compat/crm_whisper_api.py:ro
       - ./infra/whisper-sitecustomize.py:/opt/crm-compat/sitecustomize.py:ro
     labels:
       avilaops.stack: crm

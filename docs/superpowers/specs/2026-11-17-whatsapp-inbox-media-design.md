@@ -14,7 +14,7 @@ Deixar a caixa de entrada próxima da leitura cotidiana do WhatsApp, com foto do
 
 • Um processo `media-worker`, executado a partir da mesma imagem do CRM, reivindica um item por vez com `FOR UPDATE SKIP LOCKED`, gera miniaturas pelo FFmpeg e envia o áudio normalizado ao serviço interno de transcrição da Ávila Ops.
 
-• Uma instância exclusiva do serviço usa Faster Whisper Base em CPU, volume próprio, limite de memória e nenhuma porta pública. Ela não compartilha processo nem dados com outro produto.
+• Uma instância exclusiva do serviço usa Faster Whisper Small em CPU, volume próprio, limite de memória e nenhuma porta pública. A rota de inferência roda em thread para manter a verificação de saúde responsiva.
 
 ## Dados
 

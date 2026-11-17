@@ -161,7 +161,7 @@ npm run media:migrate-r2 -- --apply --limit=100
 
 Cada objeto é relido do R2 e comparado por tamanho e SHA-256 antes da atualização do banco. Para reverter novas gravações, use `MEDIA_STORAGE_PROVIDER=local` e mantenha as variáveis R2 para continuar lendo objetos já migrados.
 
-O Compose de produção também inicia `media-worker` e `whisper` como serviços separados. Eles compartilham o volume privado de mídia, mas a inferência só é acessível pela rede interna `crm-avilaops-com-media`; nenhuma porta do Whisper é publicada. O cache do modelo fica no volume persistente `crm-avilaops-com-whisper-cache`. O worker não usa o healthcheck HTTP herdado da imagem web. A adaptação para Faster Whisper 1.1 e PyAV 19 fica em [`infra/whisper-sitecustomize.py`](../infra/whisper-sitecustomize.py).
+O Compose de produção também inicia `media-worker` e `whisper` como serviços separados. Eles compartilham o volume privado de mídia, mas a inferência só é acessível pela rede interna `crm-avilaops-com-media`; nenhuma porta do Whisper é publicada. O cache do modelo fica no volume persistente `crm-avilaops-com-whisper-cache`. O worker não usa o healthcheck HTTP herdado da imagem web. A API privada do Whisper executa a inferência fora do event loop, mantendo `/saude` responsivo durante transcrições. A adaptação para Faster Whisper 1.1 e PyAV 19 fica em [`infra/whisper-sitecustomize.py`](../infra/whisper-sitecustomize.py).
 - O servidor escuta em `0.0.0.0`. No host, a porta 3020 só pode estar aberta para o Caddy.
 
 ## Logs
