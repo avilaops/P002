@@ -20,9 +20,10 @@
         "Importador Evolution de produção verificado ativo em ciclos de 15 segundos",
         "src/features/workspace/WorkspacePages.tsx",
         "test/web/inbox-presentation.test.ts",
-        "Typecheck, lint sem erros, 83 testes web, 128 testes backend, 4 testes CLI e build aprovados"
+        "Typecheck, lint sem erros, 83 testes web, 128 testes backend, 4 testes CLI e build aprovados",
+        "Pipeline 44145786403 aprovada; produção saudável no commit 853c9a2 com PostgreSQL conectado"
       ],
-      "ambiente": "correção validada localmente; publicação em produção pendente"
+      "ambiente": "produção no commit 853c9a2; SSE imediato com reconciliação REST silenciosa a cada 10 segundos"
     },
     {
       "id": "WHATSAPP-MEDIA-001",
