@@ -33,7 +33,7 @@ function SettingsShell({ children }: { children: ReactNode }) {
   const allowed = !activeItem?.manage || canManage
 
   return (
-    <div className="min-h-[calc(100dvh-var(--app-bottom-nav))] expanded:grid expanded:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="min-h-[calc(100dvh-var(--app-bottom-nav))] expanded:grid expanded:grid-cols-[252px_minmax(0,1fr)] large:grid-cols-[280px_minmax(0,1fr)]">
       <nav
         aria-label="Configurações"
         className={`${isIndex ? 'block' : 'hidden'} border-slate-200 bg-white expanded:sticky expanded:top-0 expanded:block expanded:h-dvh expanded:overflow-y-auto expanded:border-r`}

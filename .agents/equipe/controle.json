@@ -6,7 +6,7 @@
     {
       "id": "UI-REVIEW-001",
       "title": "Revisar Canais, Integrações e Caixa de entrada",
-      "status": "em-andamento",
+      "status": "concluido",
       "responsavel": null,
       "objetivo": "Melhorar arquitetura da informação, legibilidade operacional, responsividade e acessibilidade das três telas sem alterar contratos de backend.",
       "criteriosAceite": [
@@ -17,9 +17,14 @@
       ],
       "evidencias": [
         "docs/superpowers/specs/2026-11-17-crm-interface-review-design.md",
-        "docs/superpowers/plans/2026-11-17-crm-interface-review.md"
+        "docs/superpowers/plans/2026-11-17-crm-interface-review.md",
+        "test/web/inbox-presentation.test.ts",
+        "test/web/settings-presentation.test.ts",
+        "output/interface-review-2026-11-17/results.json",
+        "Typecheck, 76 testes web e build aprovados; lint sem erros",
+        "Navegador validado em 390×844, 960×900 e 1440×900 sem transbordamento horizontal ou identificador @lid visível"
       ],
-      "ambiente": "implementação local em andamento"
+      "ambiente": "branch feat/crm-interface-review; validação local com respostas controladas, sem chamadas externas"
     },
     {
       "id": "CONTAS-CRM-001",

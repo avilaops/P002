@@ -141,7 +141,7 @@ export default function IntegrationCenterPage() {
   const summary = connectionSummary(items.map((item) => item.state))
 
   return (
-    <SettingsFrame page="integrations" title="Integrações" description="Canais trazem conversas; integrações trocam dados com outros sistemas da empresa.">
+    <SettingsFrame page="integrations" title="Integrações" description="Canais trazem conversas; integrações trocam dados com outros sistemas da empresa." wide>
       <div className="space-y-4">
         <section aria-label="Resumo das integrações" className="grid grid-cols-2 gap-3 large:grid-cols-4">
           <SummaryCard value={summary.active} label="ativas" tone="text-emerald-700" />

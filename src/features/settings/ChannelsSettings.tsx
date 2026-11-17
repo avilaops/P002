@@ -45,7 +45,7 @@ export function ChannelsSettings() {
   const summary = connectionSummary([whatsapp, mail, 'soon', 'soon'])
 
   return (
-    <SettingsFrame page="channels" title="Canais" description="Cada canal entrega as conversas na Caixa de entrada, com o mesmo histórico do cliente.">
+    <SettingsFrame page="channels" title="Canais" description="Cada canal entrega as conversas na Caixa de entrada, com o mesmo histórico do cliente." wide>
       <div className="space-y-5">
         <section aria-label="Resumo dos canais" className="grid grid-cols-2 gap-3 large:grid-cols-4">
           <SummaryCard value={summary.active} label="ativos" tone="text-emerald-700" />

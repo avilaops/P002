@@ -53,7 +53,7 @@ export default function AppShell({ children, aside }: { children: ReactNode; asi
           </ul>
         </nav>
       )}
-      {immersive && sidebar.isMobile && <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-3 z-40 rounded-xl border border-slate-200 bg-white shadow-sm"><AnimatedSidebarTrigger /></div>}
+      {immersive && sidebar.isMobile && <div className="fixed bottom-[calc(13rem+env(safe-area-inset-bottom))] right-3 z-40 rounded-xl border border-slate-200 bg-white shadow-sm"><AnimatedSidebarTrigger /></div>}
     </div>
   )
 }
