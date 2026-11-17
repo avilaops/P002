@@ -4,6 +4,25 @@
   "members": [],
   "tasks": [
     {
+      "id": "CONTAS-CRM-001",
+      "title": "Sincronizar acesso corporativo do CRM com o Contas",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Registrar automaticamente no Contas a empresa e o papel de cada pessoa adicionada ao CRM, sem compartilhar dados entre tenants.",
+      "criteriosAceite": [
+        "Convite concede acesso ao aplicativo e vínculo corporativo da empresa",
+        "Administrador e equipe recebem papéis corporativos explícitos",
+        "Falha parcial fica visível como pendência",
+        "Conta existente da Silveira Cruz Engenharia corrigida e verificada",
+        "Tipos, lint, testes e produção verificados"
+      ],
+      "evidencias": [
+        "backend/test/auth-convite.test.mjs",
+        "Vínculo edeeac52-fa3c-49c0-9292-b6b4366cd35b ativo no Contas para Silveira Cruz Engenharia"
+      ],
+      "ambiente": "produção corrigida para a conta existente; automação aguardando publicação"
+    },
+    {
       "id": "WHATSAPP-R2-001",
       "title": "Migrar mídias do WhatsApp para Cloudflare R2",
       "status": "concluido",

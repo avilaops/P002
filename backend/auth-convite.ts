@@ -25,6 +25,7 @@ export type PedidoDeConvite = {
   /** Identificador da empresa no CRM: a mesma pessoa pode estar em mais de uma. */
   slugDaEmpresa: string;
   convidadoPor: string;
+  papel: "admin" | "gerente" | "atendente";
 };
 
 const TIMEOUT_MS = 10_000;
@@ -39,6 +40,10 @@ const MOTIVO_DO_AUTH: Record<string, string> = {
 
 function baseDoAuth() {
   return (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+}
+
+function papelCorporativo(papel: PedidoDeConvite["papel"]) {
+  return papel === "admin" ? "ADMINISTRADOR" : "VENDEDOR";
 }
 
 /** Porta de entrada do CRM para quem acabou de criar a senha, já na empresa certa. */
@@ -90,6 +95,38 @@ export async function convidarPelaContaAvila(pedido: PedidoDeConvite): Promise<R
     // 409 traz mensagem para quem convida (conta desligada no login único).
     const dito = resposta.status === 409 && typeof dados?.error === "string" ? dados.error.slice(0, 200) : null;
     return { status: "falhou", detalhe: dito ?? `A conta Avila Ops respondeu ${resposta.status}.` };
+  }
+
+  // A liberação do aplicativo e o vínculo com a empresa são contratos
+  // separados no Auth. Sem este segundo passo a pessoa conseguia autenticar,
+  // mas o Contas dizia que ela não pertencia ao CRM daquela empresa.
+  try {
+    const vinculo = await fetch(`${baseDoAuth()}/api/provisionamento/corporativo`, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${id}:${segredo}`).toString("base64")}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        versao: "avila.corporativo.v1",
+        email: pedido.email.trim().toLowerCase(),
+        organizacao: { referencia: pedido.slugDaEmpresa, nome: pedido.empresa },
+        unidades: [],
+        autorizacoes: [{
+          papel: papelCorporativo(pedido.papel),
+          referenciaUnidade: null,
+          limiteAprovacaoCentavos: null,
+        }],
+        convidadoPor: pedido.convidadoPor,
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!vinculo.ok) {
+      return { status: "pendente", detalhe: "A conta foi liberada, mas o vinculo da empresa no Contas ficou pendente." };
+    }
+  } catch {
+    return { status: "pendente", detalhe: "A conta foi liberada, mas o vinculo da empresa no Contas ficou pendente." };
   }
 
   if (dados?.envio === "enviado") {

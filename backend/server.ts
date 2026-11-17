@@ -838,6 +838,7 @@ async function inviteUser(admin: AuthUser, target: InvitedUser, requestId?: stri
     empresa: tenant.rows[0]?.name ?? "",
     slugDaEmpresa: tenant.rows[0]?.slug ?? "",
     convidadoPor: admin.name,
+    papel: target.role === "admin" || target.role === "gerente" ? target.role : "atendente",
   });
   const saved = await query<InvitedUser>(
     `update users set invite_status = $3, invite_detail = $4, invite_at = now()

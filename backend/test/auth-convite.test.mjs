@@ -30,7 +30,7 @@ test.afterEach(() => {
   }
 });
 
-const pedido = { email: " Ana@Empresa.Test ", nome: "Ana Souza", empresa: "Acme", slugDaEmpresa: "acme", convidadoPor: "Rogerio" };
+const pedido = { email: " Ana@Empresa.Test ", nome: "Ana Souza", empresa: "Acme", slugDaEmpresa: "acme", convidadoPor: "Rogerio", papel: "admin" };
 
 test("sem credencial o convite fica pendente e ninguem e chamado", async () => {
   delete process.env.AUTH_META_CLIENT_ID;
@@ -48,7 +48,7 @@ test("pede o convite com Basic, e-mail em minusculas e a entrada do CRM ja na em
   const chamadas = comAuth(json(201, { email: "ana@empresa.test", criada: true, convite: null, envio: "enviado" }));
   assert.deepEqual(await convidarPelaContaAvila(pedido), { status: "enviado", detalhe: "com o endereco para criar a senha" });
 
-  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas.length, 2);
   assert.equal(chamadas[0].url, "https://auth.exemplo.test/api/provisionamento/acessos");
   assert.equal(chamadas[0].method, "POST");
   assert.equal(chamadas[0].headers.authorization, `Basic ${Buffer.from("crm:segredo-de-teste").toString("base64")}`);
@@ -60,11 +60,30 @@ test("pede o convite com Basic, e-mail em minusculas e a entrada do CRM ja na em
     convidadoPor: "Rogerio",
     destino: "https://crm.exemplo.test/api/auth/sso?tenantSlug=acme",
   });
+  assert.equal(chamadas[1].url, "https://auth.exemplo.test/api/provisionamento/corporativo");
+  assert.deepEqual(chamadas[1].body, {
+    versao: "avila.corporativo.v1",
+    email: "ana@empresa.test",
+    organizacao: { referencia: "acme", nome: "Acme" },
+    unidades: [],
+    autorizacoes: [{ papel: "ADMINISTRADOR", referenciaUnidade: null, limiteAprovacaoCentavos: null }],
+    convidadoPor: "Rogerio",
+  });
 });
 
 test("quem ja tinha conta recebe so o endereco do sistema", async () => {
   comAuth(json(200, { criada: false, convite: null, envio: "enviado" }));
   assert.deepEqual(await convidarPelaContaAvila(pedido), { status: "enviado", detalhe: "a pessoa ja tinha conta Avila Ops" });
+});
+
+test("atendente recebe papel de vendedor e falha do vinculo fica pendente", async () => {
+  let chamada = 0;
+  const chamadas = comAuth(() => ++chamada === 1
+    ? new Response(JSON.stringify({ criada: false, envio: "enviado" }), { status: 200 })
+    : new Response(JSON.stringify({ error: "falhou" }), { status: 503 }));
+  const resultado = await convidarPelaContaAvila({ ...pedido, papel: "atendente" });
+  assert.deepEqual(resultado, { status: "pendente", detalhe: "A conta foi liberada, mas o vinculo da empresa no Contas ficou pendente." });
+  assert.equal(chamadas[1].body.autorizacoes[0].papel, "VENDEDOR");
 });
 
 test("e-mail que nao saiu vira falha com o motivo, e o endereco da senha nunca aparece", async () => {
