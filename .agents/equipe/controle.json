@@ -29,7 +29,7 @@
     {
       "id": "OMNICHANNEL-AI-001",
       "title": "Completar canais, integrações e inteligência operacional",
-      "status": "em-andamento",
+      "status": "concluido",
       "responsavel": null,
       "objetivo": "Implementar Instagram, Messenger, e-mail, chat do site, integrações, agente de IA e base de conhecimento com isolamento por empresa.",
       "criteriosAceite": [
@@ -42,9 +42,13 @@
       ],
       "evidencias": [
         "docs/superpowers/specs/2026-11-17-omnichannel-ai-design.md",
-        "docs/superpowers/plans/2026-11-17-omnichannel-ai.md"
+        "docs/superpowers/plans/2026-11-17-omnichannel-ai.md",
+        "24 testes direcionados, 79 testes web, tipos, lint e build aprovados",
+        "Revisão independente concluída após correções de isolamento Meta, tempo real, histórico de e-mail, IA e widget",
+        "Pipeline 44098693346 aprovada com PostgreSQL descartável, schema idempotente, imagem e deploy",
+        "Produção saudável no commit 14d64c9; banco conectado; páginas social e chat do site em HTTP 200"
       ],
-      "ambiente": "branch feat/crm-interface-review; implementação local com provedores externos simulados nos testes"
+      "ambiente": "produção no commit 14d64c9; Meta exige credenciais reais validadas pela Graph API; demais provedores externos não receberam mensagens de teste"
     },
     {
       "id": "CONTAS-CRM-001",
