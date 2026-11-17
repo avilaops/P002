@@ -27,6 +27,26 @@
       "ambiente": "branch feat/crm-interface-review; validação local com respostas controladas, sem chamadas externas"
     },
     {
+      "id": "OMNICHANNEL-AI-001",
+      "title": "Completar canais, integrações e inteligência operacional",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Implementar Instagram, Messenger, e-mail, chat do site, integrações, agente de IA e base de conhecimento com isolamento por empresa.",
+      "criteriosAceite": [
+        "Instagram, Messenger e chat do site recebem e respondem no inbox",
+        "E-mail encadeia mensagens e respostas por contato",
+        "Integrações exibem estado real e ação operacional",
+        "Agente de IA usa fontes pertinentes e auditáveis",
+        "Base de conhecimento permite gestão, busca e teste",
+        "Tipos, lint, testes, build e navegador aprovados"
+      ],
+      "evidencias": [
+        "docs/superpowers/specs/2026-11-17-omnichannel-ai-design.md",
+        "docs/superpowers/plans/2026-11-17-omnichannel-ai.md"
+      ],
+      "ambiente": "branch feat/crm-interface-review; implementação local com provedores externos simulados nos testes"
+    },
+    {
       "id": "CONTAS-CRM-001",
       "title": "Sincronizar acesso corporativo do CRM com o Contas",
       "status": "em-andamento",
