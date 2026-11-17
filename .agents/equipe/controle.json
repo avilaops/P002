@@ -4,6 +4,28 @@
   "members": [],
   "tasks": [
     {
+      "id": "COMPANY-CNPJ-001",
+      "title": "Preencher empresa pela consulta do CNPJ",
+      "status": "concluido",
+      "responsavel": null,
+      "objetivo": "Consultar dados públicos do CNPJ no cadastro de empresas e preencher o formulário sem impedir ajustes manuais.",
+      "criteriosAceite": [
+        "Consulta exige sessão autenticada e usa destino externo fixo",
+        "CNPJ formatado é normalizado e validado",
+        "Razão social, nome fantasia, telefone, e-mail e endereço são preenchidos quando disponíveis",
+        "Falhas externas são exibidas sem impedir cadastro manual",
+        "Tipos, lint, testes e build aprovados"
+      ],
+      "evidencias": [
+        "backend/company-lookup.ts",
+        "backend/test/company-lookup.test.mjs",
+        "src/features/workspace/WorkspacePages.tsx",
+        "Consulta real do CNPJ 35396075000118 validada em 17/11/2026",
+        "Typecheck, lint sem erros, 83 testes web, 131 testes backend aplicáveis e build aprovados"
+      ],
+      "ambiente": "implementação local validada; publicação pelo pipeline do repositório"
+    },
+    {
       "id": "INBOX-REALTIME-001",
       "title": "Reconciliar automaticamente a caixa de entrada",
       "status": "concluido",

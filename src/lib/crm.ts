@@ -368,6 +368,19 @@ export function listCompanies(filters?: { search?: string; page?: number; pageSi
   return api<{ companies: CrmCompany[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/companies${toQuery(filters)}`)
 }
 
+export type CompanyRegistryLookup = {
+  cnpj: string
+  legalName: string
+  tradeName: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+}
+
+export function lookupCompanyByCnpj(cnpj: string) {
+  return api<{ company: CompanyRegistryLookup }>(`/api/companies/cnpj/${encodeURIComponent(cnpj)}`)
+}
+
 export function createCompany(input: { name: string; cnpj?: string; domain?: string; phone?: string; email?: string; address?: string }) {
   return api<{ company: CrmCompany }>('/api/companies', {
     method: 'POST',

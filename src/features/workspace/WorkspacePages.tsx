@@ -32,6 +32,7 @@ import {
   getPipeline,
   listChannels,
   listCompanies,
+  lookupCompanyByCnpj,
   listContacts,
   listConversationMessages,
   listConversations,
@@ -1371,6 +1372,30 @@ function CompaniesList() {
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState({ name: '', cnpj: '', domain: '', phone: '', email: '', address: '' })
   const [saving, setSaving] = useState(false)
+  const [lookingUpCnpj, setLookingUpCnpj] = useState(false)
+  const [cnpjLookupMessage, setCnpjLookupMessage] = useState('')
+
+  const handleCnpjLookup = async () => {
+    if (lookingUpCnpj) return
+    setLookingUpCnpj(true)
+    setCnpjLookupMessage('')
+    try {
+      const { company } = await lookupCompanyByCnpj(form.cnpj)
+      setForm((current) => ({
+        ...current,
+        cnpj: company.cnpj,
+        name: company.tradeName || company.legalName,
+        phone: company.phone || current.phone,
+        email: company.email || current.email,
+        address: company.address || current.address,
+      }))
+      setCnpjLookupMessage(`Dados encontrados • ${company.legalName}`)
+    } catch (lookupError) {
+      setCnpjLookupMessage(lookupError instanceof Error ? lookupError.message : 'Não foi possível consultar este CNPJ.')
+    } finally {
+      setLookingUpCnpj(false)
+    }
+  }
 
   const loadCompanies = () => {
     setLoading(true)
@@ -1497,13 +1522,20 @@ function CompaniesList() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700">CNPJ</label>
-                  <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.cnpj} onChange={(e) => setForm({ ...form, cnpj: e.target.value })} placeholder="00.000.000/0001-00" />
+                  <div className="mt-1 flex gap-2">
+                    <input inputMode="text" className="min-w-0 flex-1 rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.cnpj} onChange={(e) => { setForm({ ...form, cnpj: e.target.value }); setCnpjLookupMessage('') }} placeholder="00.000.000/0001-00" />
+                    <button type="button" onClick={() => void handleCnpjLookup()} disabled={lookingUpCnpj || !form.cnpj.trim()} className="inline-flex min-h-10 items-center gap-1.5 rounded border border-blue-200 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+                      {lookingUpCnpj && <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />}
+                      Buscar
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700">Domínio / Website</label>
                   <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder="avila.inc" />
                 </div>
               </div>
+              {cnpjLookupMessage && <p role="status" className={`text-xs ${cnpjLookupMessage.startsWith('Dados encontrados') ? 'text-emerald-700' : 'text-red-700'}`}>{cnpjLookupMessage}</p>}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700">Telefone</label>

@@ -34,6 +34,7 @@ import { registerTeamRoutes } from "./routes-team.js";
 import { registerSettingsRoutes } from "./routes-settings.js";
 import { registerAccountRoutes } from "./routes-account.js";
 import { registerOmnichannelRoutes } from "./routes-omnichannel.js";
+import { registerCompanyLookupRoutes } from "./company-lookup.js";
 import { signOAuthState, verifyOAuthState } from "./oauth-state.js";
 import { userRemovalBlock } from "./user-removal.js";
 import {
@@ -2532,6 +2533,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
   });
 
   registerCrmCoreRoutes(app, { requireAuth });
+  registerCompanyLookupRoutes(app, { requireAuth });
   registerMcpRoutes(app, { requireAuth });
   registerThreadsRoutes(app, { requireAuth });
   registerRealtimeRoutes(app, { requireAuth });
