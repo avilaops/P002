@@ -27,7 +27,7 @@
     "dev:api": "tsx backend/server.ts",
     "dev:full": "concurrently --names api,web --prefix-colors blue,green \"npm run dev:api\" \"npm run dev:web\"",
     "db:migrate": "tsx backend/migrate.ts",
-    "media:migrate-r2": "tsc -p tsconfig.server.json && node dist-server/migrate-media-r2.js",
+    "media:migrate-r2": "node dist-server/migrate-media-r2.js",
     "build": "tsc -p tsconfig.server.json && next build",
     "start": "node scripts/start.mjs",
     "lint": "oxlint",

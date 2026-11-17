@@ -16,11 +16,11 @@
 - [x] Criar migrador com `dry-run`, verificação SHA-256 e retomada sem exclusão.
 - [x] Documentar variáveis, operação, reversão e credenciais mínimas.
 - [x] Rodar testes direcionados, tipos, lint, suíte completa e build.
-- [ ] Configurar credenciais no servidor, validar um objeto canário e publicar sem migrar dados automaticamente.
+- [x] Configurar credenciais no servidor, validar um objeto canário e publicar sem migrar dados automaticamente.
 
 ## Estado em produção
 
-O commit `98528e2` foi publicado pela pipeline `43955266478`. O serviço está saudável, o schema contém `storage_provider` e `storage_key` e as 13 mídias existentes permanecem como `local`. O bucket está privado, com `r2.dev` desabilitado e sem domínio customizado. A ativação e o canário aguardam uma credencial S3 de leitura e gravação restrita ao bucket; nenhuma variável R2 existe no servidor atualmente.
+O commit `98528e2` foi publicado pela pipeline `43955266478`. O serviço está saudável e o schema contém `storage_provider` e `storage_key`. Em 17/11/2026, a credencial R2 existente passou em PUT, GET, SHA-256 e DELETE contra o bucket; o adaptador publicado repetiu o mesmo canário com chave isolada por tenant e conversa. `MEDIA_STORAGE_PROVIDER=r2` foi ativado com backup do ambiente e rollback automático. O lote inicial migrou 49 objetos e 9.719.009 bytes, com zero falhas; o banco e o bucket conferiram 49 itens. As cópias locais não foram apagadas.
 
 ## Regras de implantação
 
