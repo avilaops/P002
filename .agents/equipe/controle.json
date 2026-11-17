@@ -6,7 +6,7 @@
     {
       "id": "EVOLUTION-WEBHOOK-001",
       "title": "Receber mensagens da Evolution em tempo real",
-      "status": "em-andamento",
+      "status": "concluido",
       "responsavel": null,
       "objetivo": "Configurar webhook autenticado por instância e reconciliar mensagens imediatamente, mantendo a varredura periódica como recuperação.",
       "criteriosAceite": [
@@ -21,9 +21,11 @@
         "backend/evolution.ts",
         "backend/test/evolution.test.mjs",
         "Contrato da Evolution 2.3.7 verificado no código instalado no servidor",
-        "10 testes direcionados aprovados"
+        "10 testes direcionados aprovados",
+        "Pipeline 44173779365 aprovado e produção saudável na revisão 868398f",
+        "Webhook real da instância verificado com quatro eventos, segredo próprio e HTTP 202 no canário autenticado"
       ],
-      "ambiente": "implementação local validada; publicação pendente"
+      "ambiente": "produção na revisão 868398f; webhook imediato com fallback periódico de 15 segundos"
     },
     {
       "id": "COMPANY-CNPJ-001",
@@ -158,7 +160,7 @@
         "backend/test/auth-convite.test.mjs",
         "Vínculo edeeac52-fa3c-49c0-9292-b6b4366cd35b ativo no Contas para Silveira Cruz Engenharia"
       ],
-      "ambiente": "produção corrigida para a conta existente; automação aguardando publicação"
+      "ambiente": "criação já provisiona conta e empresa; sincronização de alteração, desativação e remoção validada localmente e aguardando publicação"
     },
     {
       "id": "META-OAUTH-001",

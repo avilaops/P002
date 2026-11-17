@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { CONVITE_DESLIGADO, convidarPelaContaAvila, entradaDoCrm } = await import("../../dist-server/auth-convite.js");
+const { CONVITE_DESLIGADO, convidarPelaContaAvila, entradaDoCrm, revogarVinculoPelaContaAvila, sincronizarVinculoPelaContaAvila } = await import("../../dist-server/auth-convite.js");
 
 const original = globalThis.fetch;
 const env = { ...process.env };
@@ -115,4 +115,26 @@ test("recusas do auth: credencial, conta desligada, erro e rede", async () => {
 test("a entrada do CRM leva o codigo da empresa escapado", () => {
   process.env.CRM_BASE_URL = "https://crm.exemplo.test";
   assert.equal(entradaDoCrm("minha loja"), "https://crm.exemplo.test/api/auth/sso?tenantSlug=minha%20loja");
+});
+
+test("mudança de papel sincroniza o vínculo sem reenviar convite", async () => {
+  const chamadas = comAuth(json(200, { ok: true }));
+  const resultado = await sincronizarVinculoPelaContaAvila({ ...pedido, papel: "atendente" });
+  assert.equal(resultado.status, "enviado");
+  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas[0].url, "https://auth.exemplo.test/api/provisionamento/corporativo");
+  assert.equal(chamadas[0].body.autorizacoes[0].papel, "VENDEDOR");
+});
+
+test("remoção revoga somente o vínculo da empresa correta", async () => {
+  const chamadas = comAuth(json(200, { situacao: "REVOGADO" }));
+  const resultado = await revogarVinculoPelaContaAvila({ email: pedido.email, slugDaEmpresa: pedido.slugDaEmpresa });
+  assert.equal(resultado.status, "enviado");
+  assert.equal(chamadas.length, 1);
+  const url = new URL(chamadas[0].url);
+  assert.equal(chamadas[0].method, "DELETE");
+  assert.equal(url.pathname, "/api/provisionamento/corporativo");
+  assert.equal(url.searchParams.get("email"), "ana@empresa.test");
+  assert.equal(url.searchParams.get("organizacao"), "acme");
+  assert.equal(url.searchParams.get("situacao"), "REVOGADO");
 });

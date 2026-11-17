@@ -16,7 +16,7 @@ import { publishRealtime, publishRealtimeAsync, registerRealtimeRoutes, startRea
 import { ingestInboundMedia, maxMediaBytes, registerWhatsAppMediaRoutes, WHATSAPP_MEDIA_TYPES } from "./whatsapp-media.js";
 import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } from "./whatsapp-templates.js";
 import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, MessageriaRequestError, registerMessageriaRoutes } from "./messageria.js";
-import { convidarPelaContaAvila } from "./auth-convite.js";
+import { convidarPelaContaAvila, revogarVinculoPelaContaAvila, sincronizarVinculoPelaContaAvila } from "./auth-convite.js";
 import { paginaDaMeta, precisaRenovar, registerAuthMetaRoutes, renovarConexaoMeta, type CanalDescoberto } from "./auth-meta.js";
 import { registerThreadsRoutes } from "./routes-threads.js";
 import { registerMcpRoutes } from "./routes-mcp.js";
@@ -852,6 +852,27 @@ async function inviteUser(admin: AuthUser, target: InvitedUser, requestId?: stri
   return saved.rows[0] ?? target;
 }
 
+async function synchronizeUserMembership(admin: AuthUser, target: InvitedUser, requestId?: string | null): Promise<InvitedUser> {
+  const tenant = await query<{ name: string; slug: string }>("select name, slug from tenants where id = $1", [admin.tenant_id]);
+  const result = target.active
+    ? await sincronizarVinculoPelaContaAvila({
+        email: target.email,
+        nome: target.name,
+        empresa: tenant.rows[0]?.name ?? "",
+        slugDaEmpresa: tenant.rows[0]?.slug ?? "",
+        convidadoPor: admin.name,
+        papel: target.role === "admin" || target.role === "gerente" ? target.role : "atendente",
+      })
+    : await revogarVinculoPelaContaAvila({ email: target.email, slugDaEmpresa: tenant.rows[0]?.slug ?? "" });
+  const saved = await query<InvitedUser>(
+    `update users set invite_status=$3,invite_detail=$4,invite_at=now()
+     where tenant_id=$1 and id=$2 returning ${USER_COLUMNS}`,
+    [admin.tenant_id, target.id, result.status, result.detalhe],
+  );
+  await recordEvent(admin.tenant_id, "user", target.active ? "user.membership_synced" : "user.membership_revoked", { email: target.email, status: result.status }, admin.id, target.id, requestId);
+  return saved.rows[0] ?? target;
+}
+
 export async function buildApp(options: { background?: boolean; frontendHandler?: (request: IncomingMessage, response: ServerResponse) => Promise<void> } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   let sendMetaMessagingText: (tenantId: string, channelExternalId: string, recipientId: string, body: string) => Promise<string> = async () => {
@@ -1142,6 +1163,8 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     if (id === user.id && body.role && body.role !== user.role) return reply.code(400).send({ error: "Voce nao pode alterar seu proprio papel." });
 
     try {
+      const previous = await query<InvitedUser>(`select ${USER_COLUMNS} from users where tenant_id=$1 and id=$2 and removed_at is null`, [user.tenant_id, id]);
+      if (!previous.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
       const result = await query(
         `update users
          set name = coalesce($3, name),
@@ -1154,7 +1177,18 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       );
       if (!result.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
       await recordEvent(user.tenant_id, "user", "user.updated", { fields: Object.keys(body) }, user.id, id, (request as RequestWithId).requestId);
-      return { user: result.rows[0] };
+      const updated = result.rows[0] as InvitedUser;
+      if (previous.rows[0].email !== updated.email) {
+        const tenant = await query<{ slug: string }>("select slug from tenants where id=$1", [user.tenant_id]);
+        await revogarVinculoPelaContaAvila({ email: previous.rows[0].email, slugDaEmpresa: tenant.rows[0]?.slug ?? "" });
+        return { user: updated.active
+          ? await inviteUser(user, updated, (request as RequestWithId).requestId)
+          : await synchronizeUserMembership(user, updated, (request as RequestWithId).requestId) };
+      }
+      if (previous.rows[0].role !== updated.role || previous.rows[0].active !== updated.active) {
+        return { user: await synchronizeUserMembership(user, updated, (request as RequestWithId).requestId) };
+      }
+      return { user: updated };
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && error.code === "23505") {
         return reply.code(409).send({ error: "Ja existe um usuario com este email." });
@@ -1169,13 +1203,13 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     if (user.role !== "admin") return reply.code(403).send({ error: "Permissao insuficiente." });
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
 
-    await transaction(async () => {
+    const removed = await transaction(async (): Promise<{ id: string; email: string }> => {
       // Serializa alterações de administradores da mesma empresa: sem esta
       // trava, duas remoções simultâneas poderiam enxergar dois admins e
       // apagar ambos.
       await query("select pg_advisory_xact_lock(hashtext($1))", [user.tenant_id]);
-      const target = await query<{ id: string; role: string; active: boolean }>(
-        "select id, role, active from users where tenant_id = $1 and id = $2 and removed_at is null for update",
+      const target = await query<{ id: string; email: string; role: string; active: boolean }>(
+        "select id, email, role, active from users where tenant_id = $1 and id = $2 and removed_at is null for update",
         [user.tenant_id, id],
       );
       if (!target.rows[0]) {
@@ -1197,7 +1231,11 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
       await query("update users set active = false, removed_at = now() where tenant_id = $1 and id = $2", [user.tenant_id, id]);
       await query("delete from sessions where tenant_id = $1 and user_id = $2", [user.tenant_id, id]);
       await recordEvent(user.tenant_id, "user", "user.deleted", {}, user.id, id, (request as RequestWithId).requestId);
+      return { id: target.rows[0].id, email: target.rows[0].email };
     });
+    const tenant = await query<{ slug: string }>("select slug from tenants where id=$1", [user.tenant_id]);
+    const revocation = await revogarVinculoPelaContaAvila({ email: removed.email, slugDaEmpresa: tenant.rows[0]?.slug ?? "" });
+    await recordEvent(user.tenant_id, "user", "user.membership_revoked", { email: removed.email, status: revocation.status }, user.id, removed.id, (request as RequestWithId).requestId);
     return { ok: true };
   });
 

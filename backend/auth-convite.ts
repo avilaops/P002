@@ -46,6 +46,64 @@ function papelCorporativo(papel: PedidoDeConvite["papel"]) {
   return papel === "admin" ? "ADMINISTRADOR" : "VENDEDOR";
 }
 
+function credencial() {
+  const id = process.env.AUTH_META_CLIENT_ID;
+  const segredo = process.env.AUTH_META_CLIENT_SECRET;
+  if (!id || !segredo) return null;
+  return {
+    authorization: `Basic ${Buffer.from(`${id}:${segredo}`).toString("base64")}`,
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+}
+
+export async function sincronizarVinculoPelaContaAvila(pedido: PedidoDeConvite): Promise<ResultadoDoConvite> {
+  const headers = credencial();
+  if (!headers) return { status: "pendente", detalhe: CONVITE_DESLIGADO };
+  try {
+    const resposta = await fetch(`${baseDoAuth()}/api/provisionamento/corporativo`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        versao: "avila.corporativo.v1",
+        email: pedido.email.trim().toLowerCase(),
+        organizacao: { referencia: pedido.slugDaEmpresa, nome: pedido.empresa },
+        unidades: [],
+        autorizacoes: [{
+          papel: papelCorporativo(pedido.papel),
+          referenciaUnidade: null,
+          limiteAprovacaoCentavos: null,
+        }],
+        convidadoPor: pedido.convidadoPor,
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!resposta.ok) return { status: "pendente", detalhe: `O vínculo da empresa no Contas respondeu ${resposta.status}.` };
+    return { status: "enviado", detalhe: "acesso e vínculo da empresa sincronizados" };
+  } catch {
+    return { status: "pendente", detalhe: "O vínculo da empresa no Contas ficou pendente." };
+  }
+}
+
+export async function revogarVinculoPelaContaAvila(input: { email: string; slugDaEmpresa: string }): Promise<ResultadoDoConvite> {
+  const headers = credencial();
+  if (!headers) return { status: "pendente", detalhe: CONVITE_DESLIGADO };
+  const url = new URL(`${baseDoAuth()}/api/provisionamento/corporativo`);
+  url.search = new URLSearchParams({
+    email: input.email.trim().toLowerCase(),
+    organizacao: input.slugDaEmpresa,
+    situacao: "REVOGADO",
+  }).toString();
+  try {
+    const resposta = await fetch(url, { method: "DELETE", headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (resposta.status === 404) return { status: "enviado", detalhe: "vínculo da empresa já estava ausente" };
+    if (!resposta.ok) return { status: "pendente", detalhe: `A revogação no Contas respondeu ${resposta.status}.` };
+    return { status: "enviado", detalhe: "vínculo da empresa revogado" };
+  } catch {
+    return { status: "pendente", detalhe: "A revogação do vínculo no Contas ficou pendente." };
+  }
+}
+
 /** Porta de entrada do CRM para quem acabou de criar a senha, já na empresa certa. */
 export function entradaDoCrm(slugDaEmpresa: string) {
   const base = (process.env.CRM_BASE_URL ?? "https://crm.avilaops.com").replace(/\/$/, "");
@@ -60,19 +118,14 @@ export function entradaDoCrm(slugDaEmpresa: string) {
  * `dotenv` do servidor roda depois dos imports.
  */
 export async function convidarPelaContaAvila(pedido: PedidoDeConvite): Promise<ResultadoDoConvite> {
-  const id = process.env.AUTH_META_CLIENT_ID;
-  const segredo = process.env.AUTH_META_CLIENT_SECRET;
-  if (!id || !segredo) return { status: "pendente", detalhe: CONVITE_DESLIGADO };
+  const headers = credencial();
+  if (!headers) return { status: "pendente", detalhe: CONVITE_DESLIGADO };
 
   let resposta: Response;
   try {
     resposta = await fetch(`${baseDoAuth()}/api/provisionamento/acessos`, {
       method: "POST",
-      headers: {
-        authorization: `Basic ${Buffer.from(`${id}:${segredo}`).toString("base64")}`,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
+      headers,
       body: JSON.stringify({
         email: pedido.email.trim().toLowerCase(),
         nome: pedido.nome.trim().slice(0, 120),
@@ -100,32 +153,8 @@ export async function convidarPelaContaAvila(pedido: PedidoDeConvite): Promise<R
   // A liberação do aplicativo e o vínculo com a empresa são contratos
   // separados no Auth. Sem este segundo passo a pessoa conseguia autenticar,
   // mas o Contas dizia que ela não pertencia ao CRM daquela empresa.
-  try {
-    const vinculo = await fetch(`${baseDoAuth()}/api/provisionamento/corporativo`, {
-      method: "POST",
-      headers: {
-        authorization: `Basic ${Buffer.from(`${id}:${segredo}`).toString("base64")}`,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify({
-        versao: "avila.corporativo.v1",
-        email: pedido.email.trim().toLowerCase(),
-        organizacao: { referencia: pedido.slugDaEmpresa, nome: pedido.empresa },
-        unidades: [],
-        autorizacoes: [{
-          papel: papelCorporativo(pedido.papel),
-          referenciaUnidade: null,
-          limiteAprovacaoCentavos: null,
-        }],
-        convidadoPor: pedido.convidadoPor,
-      }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!vinculo.ok) {
-      return { status: "pendente", detalhe: "A conta foi liberada, mas o vinculo da empresa no Contas ficou pendente." };
-    }
-  } catch {
+  const vinculo = await sincronizarVinculoPelaContaAvila(pedido);
+  if (vinculo.status !== "enviado") {
     return { status: "pendente", detalhe: "A conta foi liberada, mas o vinculo da empresa no Contas ficou pendente." };
   }
 
