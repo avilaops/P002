@@ -41,6 +41,18 @@ export async function claimMediaJob(workerId: string): Promise<MediaJob | null> 
       `update media_processing_jobs set status='pending',locked_at=null,locked_by=null,updated_at=now()
        where status='processing' and locked_at < now()-interval '15 minutes'`,
     );
+    await query(
+      `update media_processing_jobs set status='failed',locked_at=null,locked_by=null,
+         last_error=coalesce(last_error,'Limite de tentativas excedido.'),updated_at=now()
+       where status='pending' and attempts>=5`,
+    );
+    await query(
+      `update message_media media set processing_status='failed',
+         processing_error=coalesce(job.last_error,'Limite de tentativas excedido.'),updated_at=now()
+       from media_processing_jobs job
+       where media.tenant_id=job.tenant_id and media.id=job.media_id
+         and job.status='failed' and media.processing_status='pending'`,
+    );
     const claimed = await query<MediaJob>(
       `with candidate as (
          select id from media_processing_jobs
@@ -123,9 +135,18 @@ export async function processMediaJob(job: MediaJob) {
 
     if (PREVIEWABLE.test(job.mime_type)) {
       const seek = job.mime_type.startsWith("video/") ? ["-ss", "0.2"] : [];
-      await run("ffmpeg", ["-hide_banner", "-loglevel", "error", ...seek, "-i", input, "-vf", "scale='min(960,iw)':-2", "-frames:v", "1", "-q:v", "3", "-y", previewPath]);
-      const stored = await storage.put({ tenantId: job.tenant_id, conversationId: job.conversation_id, bytes: await readFile(previewPath), mimeType: "image/jpeg", fileName: "preview.jpg" });
-      preview = { provider: stored.provider, key: stored.key, mime: "image/jpeg" };
+      let generated = true;
+      try {
+        await run("ffmpeg", ["-hide_banner", "-loglevel", "error", ...seek, "-i", input, "-vf", "scale='min(960,iw)':-2", "-frames:v", "1", "-q:v", "3", "-y", previewPath]);
+      } catch {
+        // O original autenticado continua disponível para o navegador. Repetir
+        // cinco vezes não torna um WebP exótico ou vídeo sem frame decodificável.
+        generated = false;
+      }
+      if (generated) {
+        const stored = await storage.put({ tenantId: job.tenant_id, conversationId: job.conversation_id, bytes: await readFile(previewPath), mimeType: "image/jpeg", fileName: "preview.jpg" });
+        preview = { provider: stored.provider, key: stored.key, mime: "image/jpeg" };
+      }
     }
 
     let transcript: { text: string; language: string | null } | null = null;

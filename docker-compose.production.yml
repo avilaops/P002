@@ -46,6 +46,7 @@ services:
     environment:
       TRANSCRIPTION_BASE_URL: http://whisper:8100
       TRANSCRIPTION_PROTOCOL: avila
+      DATABASE_POOL_MAX: "2"
     command: ["npm", "run", "media:worker"]
     # A imagem traz o healthcheck HTTP do serviço web, que não se aplica ao worker.
     healthcheck:
