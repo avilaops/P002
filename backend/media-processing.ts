@@ -88,19 +88,25 @@ async function transcribe(audioPath: string) {
   if (!baseUrl) return null;
   const bytes = await readFile(audioPath);
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(bytes)], { type: "audio/wav" }), "audio.wav");
-  form.append("model", process.env.TRANSCRIPTION_MODEL?.trim() || "Systran/faster-whisper-base");
-  form.append("response_format", "verbose_json");
-  const response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+  const protocol = process.env.TRANSCRIPTION_PROTOCOL?.trim() || "openai";
+  form.append(protocol === "avila" ? "arquivo" : "file", new Blob([new Uint8Array(bytes)], { type: "audio/wav" }), "audio.wav");
+  if (protocol !== "avila") {
+    form.append("model", process.env.TRANSCRIPTION_MODEL?.trim() || "Systran/faster-whisper-base");
+    form.append("response_format", "verbose_json");
+  }
+  const endpoint = protocol === "avila" ? "/transcrever" : "/v1/audio/transcriptions";
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     headers: process.env.TRANSCRIPTION_API_KEY ? { Authorization: `Bearer ${process.env.TRANSCRIPTION_API_KEY}` } : undefined,
     body: form,
     signal: AbortSignal.timeout(Number(process.env.TRANSCRIPTION_TIMEOUT_MS) || 300_000),
   });
   if (!response.ok) throw new Error(`Transcrição recusada (HTTP ${response.status}).`);
-  const data = await response.json() as { text?: unknown; language?: unknown };
-  const text = typeof data.text === "string" ? data.text.trim() : "";
-  return text ? { text: text.slice(0, 100_000), language: typeof data.language === "string" ? data.language.slice(0, 24) : null } : null;
+  const data = await response.json() as { text?: unknown; texto?: unknown; language?: unknown; idioma?: unknown };
+  const rawText = data.text ?? data.texto;
+  const rawLanguage = data.language ?? data.idioma;
+  const text = typeof rawText === "string" ? rawText.trim() : "";
+  return text ? { text: text.slice(0, 100_000), language: typeof rawLanguage === "string" ? rawLanguage.slice(0, 24) : null } : null;
 }
 
 export async function processMediaJob(job: MediaJob) {

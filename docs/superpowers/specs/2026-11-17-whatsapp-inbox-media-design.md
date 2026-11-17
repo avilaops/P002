@@ -12,9 +12,9 @@ Deixar a caixa de entrada próxima da leitura cotidiana do WhatsApp, com foto do
 
 • A importação da Evolution apenas persiste a mensagem e enfileira o processamento. Ela não espera FFmpeg nem Whisper.
 
-• Um processo `media-worker`, executado a partir da mesma imagem do CRM, reivindica um item por vez com `FOR UPDATE SKIP LOCKED`, gera miniaturas pelo FFmpeg e envia o áudio normalizado a um serviço Speaches compatível com a API da OpenAI.
+• Um processo `media-worker`, executado a partir da mesma imagem do CRM, reivindica um item por vez com `FOR UPDATE SKIP LOCKED`, gera miniaturas pelo FFmpeg e envia o áudio normalizado ao serviço interno de transcrição da Ávila Ops.
 
-• O serviço Speaches usa Faster Whisper Base em CPU, tem limite próprio de memória e não recebe tráfego público.
+• Uma instância exclusiva do serviço usa Faster Whisper Base em CPU, volume próprio, limite de memória e nenhuma porta pública. Ela não compartilha processo nem dados com outro produto.
 
 ## Dados
 
@@ -28,7 +28,7 @@ O endpoint de avatar e os endpoints de mídia continuam autenticados e verificam
 2. O CRM grava original e metadados e cria o job na mesma transação.
 3. O worker lê o original do R2 para um diretório temporário.
 4. Imagem recebe miniatura JPEG; vídeo recebe poster JPEG e faixa de áudio; áudio recebe normalização mono em 16 kHz.
-5. Áudio normalizado é transcrito automaticamente quando o Speaches está configurado.
+5. Áudio normalizado é transcrito automaticamente quando o serviço interno está configurado.
 6. O worker grava resultados, publica `message.updated` e remove temporários.
 7. A tela atualiza prévia e transcrição sem recarregar a conversa.
 

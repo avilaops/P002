@@ -44,14 +44,14 @@ services:
     init: true
     env_file: [.env]
     environment:
-      TRANSCRIPTION_BASE_URL: http://speaches:8000
-      TRANSCRIPTION_MODEL: Systran/faster-whisper-base
+      TRANSCRIPTION_BASE_URL: http://whisper:8100
+      TRANSCRIPTION_PROTOCOL: avila
     command: ["npm", "run", "media:worker"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - storage:/app/storage
     networks: [edge, media]
-    depends_on: [speaches]
+    depends_on: [whisper]
     mem_limit: 384m
     cpus: 1.0
     labels:
@@ -59,16 +59,20 @@ services:
       avilaops.tier: worker
       avilaops.owner: nicolas
 
-  speaches:
-    image: ghcr.io/speaches-ai/speaches:latest-cpu
-    container_name: crm-avilaops-com-speaches
+  whisper:
+    image: ghcr.io/avilaops/saudepet.app.br-transcricao@sha256:0d4f8642fd993e23114c871935e5b461c126b2c824ac826f6f5001864da32528
+    container_name: crm-avilaops-com-whisper
     restart: unless-stopped
     init: true
-    mem_limit: 1200m
+    environment:
+      WHISPER_MODEL: base
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+    mem_limit: 900m
     cpus: 1.5
     networks: [media]
     volumes:
-      - whisper-cache:/home/ubuntu/.cache/huggingface/hub
+      - whisper-cache:/home/transcricao/.cache
     labels:
       avilaops.stack: crm
       avilaops.tier: internal-ai
