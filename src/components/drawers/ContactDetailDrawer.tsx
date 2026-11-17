@@ -79,6 +79,14 @@ export default function ContactDetailDrawer({
     loadDetails()
   }, [contactId])
 
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
   const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -159,8 +167,13 @@ export default function ContactDetailDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
-      <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl animate-in slide-in-from-right duration-200">
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div role="dialog" aria-modal="true" aria-label="Ficha do contato" className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Header do Drawer */}
         <div className="flex items-center justify-between border-b border-slate-200 p-4">
           <div className="flex items-center gap-3">

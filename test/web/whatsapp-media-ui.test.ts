@@ -19,3 +19,12 @@ test('botão do contato abre a conversa dentro do CRM', async () => {
   assert.match(source, /openContactWhatsApp\(contactId\)/)
   assert.match(source, /router\.push\(`\/communications\/inbox\/\$\{result\.conversation\.id\}\//)
 })
+
+test('ficha do contato fecha pelo fundo e pela tecla Escape', async () => {
+  const source = await readFile(new URL('../../src/components/drawers/ContactDetailDrawer.tsx', import.meta.url), 'utf8')
+
+  assert.match(source, /event\.target === event\.currentTarget/)
+  assert.match(source, /event\.key === 'Escape'/)
+  assert.match(source, /removeEventListener\('keydown', closeOnEscape\)/)
+  assert.match(source, /role="dialog" aria-modal="true"/)
+})
