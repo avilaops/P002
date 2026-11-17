@@ -4,6 +4,20 @@
   "members": [],
   "tasks": [
     {
+      "id": "ERP-TIMELINE-001",
+      "title": "Conciliar pedidos e pagamentos na ficha do cliente",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Vincular eventos antigos e novos ao cliente certo e permitir recuperação de falhas pela equipe.",
+      "criteriosAceite": [
+        "Pagamento recebido antes do pedido aparece após a identificação do cliente",
+        "Falhas de identidade mantêm o evento pendente até que um gestor resolva a causa",
+        "Reprocessamentos simultâneos preservam uma única aplicação",
+        "Deploy verificado"
+      ],
+      "evidencias": ["backend/test/tenant-integration.test.mjs", "32 testes de importação e integração aprovados em PostgreSQL isolado, incluindo webhook ERP assinado, histórico legado e reprocessamento"]
+    },
+    {
       "id": "CONTACT-IDENTITY-001",
       "title": "Identificar e unir fichas de contato na mesma empresa",
       "status": "em-andamento",
@@ -20,7 +34,8 @@
         "backend/test/contact-import.test.mjs",
         "backend/test/tenant-integration.test.mjs",
         "31 verificações aprovadas no conjunto de importação e integração com PostgreSQL descartável, incluindo isolamento e concorrência de eventos",
-        "Navegador local com fichas fictícias: abrir, revisar coincidência, cancelar e confirmar união; duplicata removida da lista"
+        "Navegador local com fichas fictícias: abrir, revisar coincidência, cancelar e confirmar união; duplicata removida da lista",
+        "Pipeline 44180711093 aprovada; /api/health retornou 979d72f e banco conectado"
       ]
     },
     {

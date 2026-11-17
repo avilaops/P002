@@ -6,7 +6,8 @@ import { LoadingStatusBadge, StatusBadge } from '../../components/ui/StatusBadge
 import type { ConnectionState } from '../../lib/connection'
 import { ApiError, listAutomations } from '../../lib/crm'
 import { disconnectGoogleIntegration, getGoogleAuthUrl, getGoogleIntegrationStatus } from '../../lib/googleCalendar'
-import { connectErp, disconnectErp, getErpStatus, type ErpStatus } from '../../lib/integrations'
+import { connectErp, disconnectErp, getErpStatus, getErpEvents, retryErpEvent, type ErpInboundEvent, type ErpStatus } from '../../lib/integrations'
+import { useSession } from '../../lib/session'
 import { getMessageriaStatus } from '../../lib/messageria'
 import { useNavigation } from '../../lib/navigationContext'
 import { siteUrl } from '../../lib/seo'
@@ -213,6 +214,30 @@ function ErpSheet({ open, status, onClose, onChanged }: { open: boolean; status:
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const webhookUrl = `${siteUrl}/api/integrations/erp/webhook`
+  const { canManage } = useSession()
+  const [events, setEvents] = useState<ErpInboundEvent[]>([])
+  useEffect(() => {
+    if (!open || !status?.connected) return
+    let active = true
+    setEvents([])
+    setError('')
+    getErpEvents().then(result => { if (active) setEvents(result.events) })
+      .catch(err => { if (active) setError(err instanceof Error ? err.message : 'Falha ao carregar eventos.') })
+    return () => { active = false }
+  }, [open, status])
+
+  async function retry(id: string) {
+    setBusy(true)
+    setError('')
+    try {
+      await retryErpEvent(id)
+      onChanged('Evento do ERP reprocessado.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao reprocessar evento.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -272,6 +297,17 @@ function ErpSheet({ open, status, onClose, onChanged }: { open: boolean; status:
                 </div>
               ))}
             </dl>
+            {events.length > 0 && <details>
+              <summary className="cursor-pointer font-semibold">Eventos do ERP</summary>
+              <ul className="mt-2 divide-y divide-slate-200">
+                {events.map(event => <li key={event.id} className="py-2">
+                  <p className="font-medium">{event.event_type} • {event.processed_at ? 'Processado' : event.error ? 'Falhou' : 'Pendente'}</p>
+                  <time className="text-xs" dateTime={event.created_at}>{new Date(event.created_at).toLocaleString('pt-BR')}</time>
+                  {event.error && <p>{event.error}</p>}
+                  {!event.processed_at && canManage && <button type="button" disabled={busy} className={buttonClass.secondary} onClick={() => retry(event.id)}>Reprocessar</button>}
+                </li>)}
+              </ul>
+            </details>}
             <button type="button" className={buttonClass.danger} disabled={busy} onClick={disconnect}>
               {busy ? 'Desconectando…' : 'Desconectar o ERP'}
             </button>

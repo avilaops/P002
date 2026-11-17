@@ -244,6 +244,24 @@ create table if not exists inbound_events (
 );
 
 create index if not exists inbound_events_pending_idx on inbound_events(tenant_id, source, processed_at);
+create index if not exists inbound_erp_order_id_idx on inbound_events(tenant_id, (payload #>> '{aggregate,id}'))
+  where source='erp' and event_type='order.confirmed' and processed_at is not null;
+
+-- Older order references stored only the number and channel. Resolve their customer
+-- through the processed order envelope, scoped to the same ERP connection's tenant.
+create or replace view erp_order_contacts as
+select o.tenant_id,o.external_id as order_id,c.id as contact_id
+from external_references o
+left join lateral (
+  select min(i.payload #>> '{data,customerId}') as customer_id from inbound_events i
+  where o.metadata->>'erp_customer_id' is null and i.tenant_id=o.tenant_id and i.source='erp'
+    and i.event_type='order.confirmed' and i.processed_at is not null and i.payload #>> '{aggregate,id}'=o.external_id
+  having count(distinct i.payload #>> '{data,customerId}')=1
+) legacy on true
+join external_references r on r.tenant_id=o.tenant_id and r.system='erp' and r.entity_type='customer'
+  and r.external_id=coalesce(o.metadata->>'erp_customer_id',legacy.customer_id)
+join contacts c on c.tenant_id=r.tenant_id and c.id=r.entity_id
+where o.system='erp' and o.entity_type='order';
 
 -- CPF/CNPJ é a chave canônica de pessoa no ERP (documento fiscal). Aqui ele é
 -- opcional: um lead de Instagram não tem documento, e exigir um impediria o

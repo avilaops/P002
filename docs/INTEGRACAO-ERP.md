@@ -42,9 +42,15 @@ loop revertendo a alteração um do outro.
 
 ## Como uma pessoa é reconhecida
 
-Ordem de confiança: **vínculo explícito → CPF/CNPJ → telefone (só dígitos) →
-e-mail**. Não casar nada cria contato novo, fundir dois contatos por engano
-custa muito mais caro de desfazer do que ter um duplicado.
+O CRM usa o vínculo já confirmado com o cliente do ERP. No primeiro evento,
+consulta CPF/CNPJ, telefone normalizado e e-mail dentro da empresa. Se essas
+chaves apontarem para fichas distintas, o evento fica pendente para revisão.
+A opção de criar contatos controla o que acontece quando nenhuma ficha coincide.
+
+O pagamento aparece na ficha por meio do cliente do pedido. Se o pagamento
+chegar primeiro, ele passa a aparecer quando o vínculo do pedido estiver
+disponível. Pedidos antigos podem recuperar esse vínculo pelo evento de
+confirmação já processado.
 
 ---
 
@@ -79,10 +85,13 @@ tabela `integrations` já usada por Meta e Google.
 - `GET /api/integrations/erp/status` - conectado, eventos pendentes e contagem
   de vínculos por tipo.
 - `GET /api/integrations/erp/inbound?onlyErrors=true` - o que chegou e falhou.
+- `POST /api/integrations/erp/inbound/:id/retry` • gestor reprocessa um evento da própria empresa.
 
 Um evento que falha numa regra de negócio responde **200** com o erro gravado,
 de propósito: reentregar não conserta bug, e faria o ERP repetir até a
-dead-letter. O reprocessamento é manual.
+dead-letter. Em Configurações › Integrações › ERP Ávila Ops, abra **Eventos do
+ERP**. Depois de corrigir a causa, selecione **Reprocessar**. Alterações de um
+evento são aplicadas na mesma transação.
 
 Duplicata também responde 200, a entrega do ERP é *at-least-once*, e a segunda
 cópia do mesmo evento é comportamento normal, barrada pelo unique
@@ -105,6 +114,5 @@ remetente escolher em qual base gravar antes de a assinatura ser conferida.
 
 ## Pendente
 
-- Tela de configuração no painel (as rotas existem; a UI não).
 - Cotação de produto dentro da conversa, depende de o CRM conhecer catálogo.
 - Reconciliação periódica como fallback do webhook.

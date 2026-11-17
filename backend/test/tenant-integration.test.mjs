@@ -245,6 +245,42 @@ test('webhooks sociais concorrentes reutilizam contato e conversa e contam cada 
   }
 });
 
+test('ERP vincula pagamento antecipado ao contato, recusa ambiguidades e reprocessa uma vez', {skip:!enabled}, async () => {
+  const erpTenantId=randomUUID(), secret='fixture-erp-secret';
+  await ok('POST','/api/integrations/erp/connect',{erpTenantId,apiKey:'fixture-erp-key',webhookSecret:secret,baseUrl:'https://example.test'});
+  const post=async(type,aggregateId,data) => {
+    const payload=JSON.stringify({id:randomUUID(),type,aggregate:{id:aggregateId},tenantId:erpTenantId,data});
+    const ts=Math.floor(Date.now()/1000);
+    const signature=createHmac('sha256',secret).update(`${ts}.${payload}`).digest('hex');
+    const res=await app.inject({method:'POST',url:'/api/integrations/erp/webhook',payload,headers:{'content-type':'application/json','x-avila-tenant':erpTenantId,'x-avila-signature':`t=${ts},v1=${signature}`}});
+    assert.equal(res.statusCode,200,res.body);
+    return res.json();
+  };
+  const customer=randomUUID(),order=randomUUID();
+  const primary=(await ok('POST','/api/contacts',{name:'Erp A',email:'one@erp.test'},'admin',201)).contact;
+  const secondary=(await ok('POST','/api/contacts',{name:'Erp B',phone:'(18) 99800-2200'},'admin',201)).contact;
+  assert.equal((await post('customer.upserted',customer,{email:primary.email,phone:'5518998002200'})).ok,false);
+  const pending=(await ok('GET','/api/integrations/erp/inbound?onlyErrors=true')).events[0];
+  assert.match(pending.error,/ambígua/);
+  const retry='/api/integrations/erp/inbound/'+pending.id+'/retry';
+  assert.equal((await call('POST',retry,{},'agent')).statusCode,403);
+  assert.equal((await call('POST',retry,{},'other')).statusCode,409);
+  await ok('PATCH','/api/contacts/'+secondary.id,{phone:null});
+  const results=await Promise.all([ok('POST',retry,{}),ok('POST',retry,{})]);
+  assert.equal(results.filter(r=>r.duplicate).length,1);
+  assert.equal(results.find(r=>!r.duplicate).contactId,primary.id);
+  assert.deepEqual((await ok('GET','/api/integrations/erp/inbound?onlyErrors=true')).events,[]);
+  await post('payment.captured',randomUUID(),{orderId:order,amount:125});
+  await post('order.confirmed',order,{customerId:customer,totalAmount:125});
+  assert.equal((await post('payment.refunded',randomUUID(),{orderId:order,amount:25})).contactId,primary.id);
+  const timeline=async()=> (await ok('GET','/api/contacts/'+primary.id+'/timeline')).events
+    .map(row=>row.event_type).filter(x=>x.startsWith('erp.')).sort();
+  const expected=['erp.contact_linked','erp.order_confirmed','erp.payment_captured','erp.payment_refunded'];
+  assert.deepEqual(await timeline(),expected);
+  await db.query("update external_references set metadata=metadata-'erp_customer_id' where tenant_id=$1 and entity_type='order' and external_id=$2",[tenantA,order]);
+  assert.deepEqual(await timeline(),expected,'historical order uses the processed envelope');
+});
+
 test('calendar updates, cancellation, reopening and failures are auditable without external calls',{skip:!enabled},async()=>{
   const task=(await db.query("insert into tasks(tenant_id,title,due_at) values($1,'Calendar fixture','2026-10-01T12:00:00Z') returning *",[tenantA])).rows[0];
   await db.query("insert into integrations(tenant_id,provider,access_token) values($1,'google_calendar','fixture-token')",[tenantA]);

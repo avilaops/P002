@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { query } from "./db.js";
+import { query, transaction } from "./db.js";
 
 /**
  * PONTE COM O ERP — crm.avilaops.com ↔ erp.avilaops.com
@@ -120,13 +120,15 @@ export async function linkExternal(
   externalId: string,
   metadata: Record<string, unknown> = {},
 ) {
-  await query(
+  const link = await query(
     `insert into external_references (tenant_id, system, entity_type, entity_id, external_id, metadata, synced_at)
      values ($1, $2, $3, $4, $5, $6, now())
      on conflict (tenant_id, system, entity_type, entity_id)
-     do update set external_id = excluded.external_id, metadata = excluded.metadata, synced_at = now()`,
+     do update set external_id = excluded.external_id, metadata = excluded.metadata, synced_at = now()
+     where excluded.entity_type <> 'customer' or external_references.external_id=excluded.external_id`,
     [tenantId, ERP_PROVIDER, entityType, entityId, externalId, JSON.stringify(metadata)],
   );
+  if (!link.rowCount) throw new Error("Identidade ambígua. A ficha já está vinculada a outro cliente do ERP.");
 }
 
 export async function internalIdOf(tenantId: string, entityType: string, externalId: string): Promise<string | null> {
@@ -168,12 +170,12 @@ export async function findConnectionByErpTenant(
     `select tenant_id, app_secret, access_token, metadata
      from integrations
      where provider = $1 and metadata->>'erp_tenant_id' = $2
-     limit 1`,
+     limit 2`,
     [ERP_PROVIDER, erpTenantId],
   );
 
   const row = result.rows[0];
-  if (!row) return null;
+  if (result.rows.length !== 1) return null;
 
   return {
     tenant_id: row.tenant_id,
@@ -224,27 +226,7 @@ export type ErpEventEnvelope = {
   data: Record<string, unknown>;
 };
 
-/** Normaliza telefone para comparar: o ERP grava com máscara, o WhatsApp não. */
-function digitsOnly(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const digits = value.replace(/\D/g, "");
-  return digits.length >= 8 ? digits : null;
-}
-
-/**
- * Encontra o contato que já representa esta pessoa.
- *
- * A ordem das tentativas é a ordem de confiança da chave:
- *
- * 1. **vínculo explícito** — já conciliado antes, não há dúvida;
- * 2. **CPF/CNPJ** — documento é único por pessoa, é a chave do ERP;
- * 3. **telefone** — forte no Brasil, e é como o WhatsApp identifica;
- * 4. **e-mail** — o mais fraco: casal que compartilha caixa e endereço
- *    corporativo de contato fundiriam duas pessoas numa só.
- *
- * Não casar nada é resultado aceitável: cria-se um contato novo. Fundir dois
- * contatos por engano é muito mais caro de desfazer do que ter um duplicado.
- */
+/** Um vínculo explícito prevalece. Antes do primeiro vínculo, as chaves precisam ser compatíveis. */
 async function findContact(
   tenantId: string,
   erpCustomerId: string,
@@ -253,37 +235,22 @@ async function findContact(
   const linked = await internalIdOf(tenantId, "customer", erpCustomerId);
   if (linked) return linked;
 
-  const cpfCnpj = digitsOnly(data.cpfCnpj);
-  if (cpfCnpj) {
-    const byDoc = await query<{ id: string }>(
-      `select id from contacts
-       where tenant_id = $1 and regexp_replace(coalesce(cpf_cnpj, ''), '\\D', '', 'g') = $2
-       limit 1`,
-      [tenantId, cpfCnpj],
-    );
-    if (byDoc.rows[0]) return byDoc.rows[0].id;
+  const result = await query<{ id: string; conflict: boolean }>(
+    `select c.id, (crm_document_key(c.cpf_cnpj) <> crm_document_key($2) or
+         exists (select 1 from external_references r where r.tenant_id=c.tenant_id and r.system='erp'
+           and r.entity_type='customer' and r.entity_id=c.id and r.external_id<>$5)) is true as conflict
+       from contacts c where c.tenant_id=$1 and (
+         crm_document_key(c.cpf_cnpj)=crm_document_key($2) or
+         crm_phone_key(c.phone,c.source)=crm_phone_key($3,'erp') or
+         lower(btrim(c.email))=nullif(lower(btrim($4)),'')) limit 2 for update`,
+    [tenantId, typeof data.cpfCnpj === 'string' ? data.cpfCnpj : null,
+      typeof data.phone === 'string' ? data.phone : null,
+      typeof data.email === 'string' && data.email.includes('@') ? data.email : null, erpCustomerId],
+  );
+  if (result.rows.length > 1 || result.rows[0]?.conflict) {
+    throw new Error("Identidade ambígua. Revise as fichas e o vínculo do cliente antes de reprocessar o evento.");
   }
-
-  const phone = digitsOnly(data.phone);
-  if (phone) {
-    const byPhone = await query<{ id: string }>(
-      `select id from contacts
-       where tenant_id = $1 and regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = $2
-       limit 1`,
-      [tenantId, phone],
-    );
-    if (byPhone.rows[0]) return byPhone.rows[0].id;
-  }
-
-  if (typeof data.email === "string" && data.email.includes("@")) {
-    const byEmail = await query<{ id: string }>(
-      `select id from contacts where tenant_id = $1 and lower(email) = lower($2) limit 1`,
-      [tenantId, data.email],
-    );
-    if (byEmail.rows[0]) return byEmail.rows[0].id;
-  }
-
-  return null;
+  return result.rows[0]?.id ?? null;
 }
 
 /**
@@ -322,7 +289,6 @@ export async function reconcileCustomer(
   const inserted = await query<{ id: string }>(
     `insert into contacts (tenant_id, name, email, phone, cpf_cnpj, source)
      values ($1, $2, $3, $4, $5, 'erp')
-     on conflict (tenant_id, phone) do update set updated_at = now()
      returning id`,
     [
       tenantId,
@@ -352,6 +318,8 @@ async function winLeadForContact(
   orderId: string,
   totalCents: number,
 ): Promise<string | null> {
+  const previous = await query<{id:string}>("select id from leads where tenant_id=$1 and contact_id=$2 and erp_order_id=$3 limit 1", [tenantId, contactId, orderId]);
+  if (previous.rows[0]) return previous.rows[0].id;
   const lead = await query<{ id: string }>(
     `update leads
         set status = 'won',
@@ -372,6 +340,52 @@ async function winLeadForContact(
 }
 
 export type HandleResult = { action: string; contactId?: string | null; leadId?: string | null };
+
+type Recorder = Parameters<typeof handleErpEvent>[2];
+
+export async function processStoredErpEvent(connection: ErpConnection, id: string, recordEvent: Recorder, retry = false) {
+  const tenant = connection.tenant_id;
+  return transaction(async () => {
+    const stored = await query<{ processed_at: Date | null; payload: ErpEventEnvelope }>(
+      "select processed_at,payload from inbound_events where tenant_id=$1 and source='erp' and id=$2 for update",
+      [tenant, id],
+    );
+    const row = stored.rows[0];
+    if (!row) throw Object.assign(new Error("Evento não encontrado."), {statusCode:404});
+    if (row.processed_at) return {ok:true, duplicate:true};
+    if ((retry || row.payload.tenantId) && row.payload.tenantId !== connection.erp_tenant_id) {
+      throw Object.assign(new Error("Evento de outra conexão do ERP."), {statusCode:422});
+    }
+    await query("savepoint erp_effects");
+    try {
+      const customer = row.payload.type === "customer.upserted" ? row.payload.aggregate.id : row.payload.data?.customerId;
+      if (typeof customer === "string") {
+        await query("select pg_advisory_xact_lock(hashtextextended($1,0))", [`erp-customer:${tenant}:${customer}`]);
+        const data = row.payload.data ?? {};
+        await query(`select pg_advisory_xact_lock(hashtextextended($1 || ':' || identity_key,0))
+          from (select distinct identity_key from unnest(array[
+            crm_document_key($2),crm_phone_key($3,'erp'),nullif(lower(btrim($4)),'')
+          ]) identity_key where identity_key is not null order by identity_key) identities`,
+          [tenant,data.cpfCnpj ?? null,data.phone ?? null,data.email ?? null]);
+      }
+      const result = await handleErpEvent(connection,row.payload,async (...args) => {
+        // An older release could commit the audit event before marking its envelope processed.
+        const recorded = await query("select 1 from events where tenant_id=$1 and event_type=$2 and payload->>'event_id'=$3 limit 1",
+          [tenant,args[2],row.payload.id]);
+        if (!recorded.rowCount) await recordEvent(...args);
+      });
+      await query("update inbound_events set processed_at=now(),error=null where id=$1 and tenant_id=$2",[id,tenant]);
+      await query("update integrations set metadata=jsonb_set(metadata,'{last_event_at}',to_jsonb(now()::text),true),updated_at=now() where tenant_id=$1 and provider='erp'",[tenant]);
+      return {ok:true,...result};
+    } catch (error) {
+      await query("rollback to savepoint erp_effects");
+      const message = error instanceof Error && error.message.startsWith("Identidade ambígua")
+        ? error.message : "Falha ao aplicar o evento. Verifique os vínculos e tente novamente.";
+      await query("update inbound_events set error=$3 where id=$1 and tenant_id=$2",[id,tenant,message]);
+      return {ok:false,error:message};
+    }
+  });
+}
 
 /**
  * Aplica um evento do ERP.
@@ -423,6 +437,7 @@ export async function handleErpEvent(
 
     const totalCents = Math.round(Number(data.totalAmount ?? 0) * 100);
     await linkExternal(tenantId, "order", event.aggregate.id, event.aggregate.id, {
+      erp_customer_id: erpCustomerId,
       number: data.number ?? null,
       channel: data.channel ?? null,
     });
@@ -432,7 +447,7 @@ export async function handleErpEvent(
       leadId = await winLeadForContact(tenantId, contactId, event.aggregate.id, totalCents);
     }
 
-    await recordEvent(tenantId, "lead", "erp.order_confirmed", {
+    await recordEvent(tenantId, leadId ? "lead" : contactId ? "contact" : "integration", "erp.order_confirmed", {
       erp_order_id: event.aggregate.id,
       number: data.number ?? null,
       channel: data.channel ?? null,
@@ -446,9 +461,11 @@ export async function handleErpEvent(
 
   if (event.type.startsWith("payment.")) {
     const orderId = typeof data.orderId === "string" ? data.orderId : null;
-    const contactId = orderId ? await internalIdOf(tenantId, "order", orderId) : null;
+    const contactId = orderId ? (await query<{contact_id: string}>(
+      "select contact_id from erp_order_contacts where tenant_id=$1 and order_id=$2", [tenantId, orderId],
+    )).rows[0]?.contact_id ?? null : null;
 
-    await recordEvent(tenantId, "lead", `erp.${event.type.replace(".", "_")}`, {
+    await recordEvent(tenantId, contactId ? "contact" : "integration", `erp.${event.type.replace(".", "_")}`, {
       erp_order_id: orderId,
       erp_payment_id: event.aggregate.id,
       method: data.method ?? null,
@@ -456,7 +473,7 @@ export async function handleErpEvent(
       event_id: event.id,
     }, null, contactId);
 
-    return { action: "payment_recorded" };
+    return { action: "payment_recorded", contactId };
   }
 
   await recordEvent(tenantId, "integration", "erp.event_unhandled", {

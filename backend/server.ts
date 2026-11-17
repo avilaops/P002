@@ -43,7 +43,7 @@ import {
   ErpRequestError,
   findConnectionByErpTenant,
   getConnection,
-  handleErpEvent,
+  processStoredErpEvent,
   pushContactToErp,
   verifyErpSignature,
   type ErpEventEnvelope,
@@ -1782,7 +1782,10 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
         `select id, entity_type, event_type, payload, created_at
          from events
          where tenant_id = $1 and (entity_id = $2 or entity_id in
-           (select original_id from contact_merges where tenant_id=$1 and contact_id=$2))
+           (select original_id from contact_merges where tenant_id=$1 and contact_id=$2)
+           or ((event_type='erp.order_confirmed' or left(event_type,12)='erp.payment_')
+             and payload->>'erp_order_id' in
+               (select order_id from erp_order_contacts where tenant_id=$1 and contact_id=$2)))
          order by created_at desc limit 50`,
         [user.tenant_id, id],
       ),
@@ -2438,47 +2441,28 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     if (!event?.id || !event?.type || !event?.aggregate?.id) {
       return reply.code(400).send({ error: "Envelope de evento invalido." });
     }
+    if (event.tenantId && event.tenantId !== erpTenantId) return reply.code(400).send({ error: "Empresa do evento incompatível com a conexão." });
 
     // Idempotência de entrada: a entrega do ERP é at-least-once, então a
     // segunda cópia do mesmo evento precisa virar no-op em vez de segundo lead.
     // A garantia é o unique, não uma consulta prévia — duas entregas
     // simultâneas passariam ambas pela consulta.
-    let inboundId: string;
-    try {
-      const inserted = await query<{ id: string }>(
-        `insert into inbound_events (tenant_id, source, external_id, event_type, payload)
-         values ($1, 'erp', $2, $3, $4) returning id`,
-        [connection.tenant_id, event.id, event.type, JSON.stringify(event)],
+    const inserted = await query<{ id: string }>(
+      `insert into inbound_events (tenant_id, source, external_id, event_type, payload)
+       values ($1,'erp',$2,$3,$4) on conflict (tenant_id,source,external_id) do nothing returning id`,
+      [connection.tenant_id,event.id,event.type,JSON.stringify({...event,tenantId:erpTenantId})],
+    );
+    let inboundId = inserted.rows[0]?.id;
+    if (!inboundId) {
+      const previous = await query<{id:string; error:string | null; processed_at:Date | null}>(
+        "select id,error,processed_at from inbound_events where tenant_id=$1 and source='erp' and external_id=$2",
+        [connection.tenant_id,event.id],
       );
-      inboundId = inserted.rows[0].id;
-    } catch (error) {
-      if ((error as { code?: string }).code === "23505") {
-        // 200 de propósito: repetir é comportamento normal do emissor, e
-        // devolver erro faria o ERP reentregar até a dead-letter.
-        return { ok: true, duplicate: true };
-      }
-      throw error;
+      if (!previous.rows[0] || previous.rows[0].error || previous.rows[0].processed_at) return {ok:true,duplicate:true};
+      inboundId=previous.rows[0].id;
     }
-
-    try {
-      const result = await handleErpEvent(connection, event, (tenantId, entityType, eventType, payload, actor, entityId) =>
-        recordEvent(tenantId, entityType, eventType, payload, actor, entityId, (request as RequestWithId).requestId),
-      );
-      await query("update inbound_events set processed_at = now() where id = $1", [inboundId]);
-      await query("update integrations set metadata = jsonb_set(metadata, '{last_event_at}', to_jsonb(now()::text), true), updated_at = now() where tenant_id = $1 and provider = $2", [
-        connection.tenant_id,
-        ERP_PROVIDER,
-      ]);
-      return { ok: true, ...result };
-    } catch (error) {
-      // Falha de regra de negócio não melhora com reentrega: registra-se o
-      // erro e responde 200 para o evento não circular na fila do ERP. O
-      // reprocessamento é manual, pela listagem de eventos de entrada.
-      const message = String(error).slice(0, 1000);
-      await query("update inbound_events set error = $2 where id = $1", [inboundId, message]);
-      request.log.error({ err: error }, "Falha ao processar evento do ERP");
-      return { ok: false, error: "Evento registrado com erro." };
-    }
+    return processStoredErpEvent(connection,inboundId,(tenant,type,eventType,payload,actor,entity) =>
+      recordEvent(tenant,type,eventType,payload,actor,entity,request.id));
   });
 
   app.get("/api/integrations/erp/status", async (request, reply) => {
@@ -2552,18 +2536,30 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
   });
 
   /** Eventos recebidos do ERP — console para diagnosticar o que falhou. */
+  app.post("/api/integrations/erp/inbound/:id/retry", async (request, reply) => {
+    const user=await requireAuth(request,reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({error:"Permissão insuficiente."});
+    const {id}=z.object({id:z.string().uuid()}).parse(request.params);
+    const connection=await getConnection(user.tenant_id,decryptSecret);
+    if (!connection) return reply.code(409).send({error:"Conecte o ERP antes de reprocessar."});
+    const result=await processStoredErpEvent(connection,id,(tenant,type,eventType,payload,_actor,entity) =>
+      recordEvent(tenant,type,eventType,payload,user.id,entity,request.id),true);
+    return reply.code(result.ok ? 200 : 422).send(result);
+  });
+
   app.get("/api/integrations/erp/inbound", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
     const filters = z
-      .object({ onlyErrors: z.coerce.boolean().default(false), limit: z.coerce.number().int().min(1).max(200).default(50) })
+      .object({ onlyErrors: z.stringbool().default(false), pendingFirst: z.stringbool().default(false), limit: z.coerce.number().int().min(1).max(200).default(50) })
       .parse(request.query);
 
     const result = await query(
       `select id, external_id, event_type, processed_at, error, created_at
          from inbound_events
         where tenant_id = $1 and source = 'erp' ${filters.onlyErrors ? "and error is not null" : ""}
-        order by created_at desc
+        order by ${filters.pendingFirst ? "(processed_at is null) desc," : ""} created_at desc
         limit $2`,
       [user.tenant_id, filters.limit],
     );
