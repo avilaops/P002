@@ -47,6 +47,9 @@ services:
       TRANSCRIPTION_BASE_URL: http://whisper:8100
       TRANSCRIPTION_PROTOCOL: avila
     command: ["npm", "run", "media:worker"]
+    # A imagem traz o healthcheck HTTP do serviço web, que não se aplica ao worker.
+    healthcheck:
+      disable: true
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - storage:/app/storage
@@ -65,14 +68,16 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      WHISPER_MODEL: base
+      WHISPER_MODEL: small
       WHISPER_DEVICE: cpu
       WHISPER_COMPUTE_TYPE: int8
+      PYTHONPATH: /opt/crm-compat
     mem_limit: 900m
     cpus: 1.5
     networks: [media]
     volumes:
       - whisper-cache:/home/transcricao/.cache
+      - ./infra/whisper-sitecustomize.py:/opt/crm-compat/sitecustomize.py:ro
     labels:
       avilaops.stack: crm
       avilaops.tier: internal-ai
