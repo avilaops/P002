@@ -24,6 +24,56 @@ function conflict(message: string): never {
   throw Object.assign(new Error(message), { statusCode: 422 });
 }
 
+/** Serialize writers that recognize the same person through different channels. */
+export async function lockContactIdentity(tenantId: string, origin: string, document: unknown, phone: unknown, email: unknown) {
+  await query(`select pg_advisory_xact_lock(hashtextextended($1 || ':' || identity_key,0))
+    from (select distinct identity_key from unnest(array[
+      crm_document_key($2),crm_phone_key($3,$4),nullif(lower(btrim($5)),'')
+    ]) identity_key where identity_key is not null order by identity_key) identities`,
+    [tenantId, document ?? null, phone ?? null, origin, email ?? null]);
+}
+
+/** Register within the caller's audit transaction. A replay keeps the confirmed link. */
+export async function registerMailSender(tenantId: string, senderId: string, input: {
+  name: string; company: string; phone: string; tags: string[];
+}) {
+  const sender = await query<{ email: string }>(
+    "select lower(btrim(email)) as email from mail_senders where tenant_id=$1 and id=$2", [tenantId, senderId]);
+  const email = sender.rows[0]?.email;
+  if (!email) throw Object.assign(new Error("Remetente não encontrado."), { statusCode: 404 });
+  await lockContactIdentity(tenantId, "email", null, input.phone, email);
+  const matches = await query<{ id: string; incompatible: boolean }>(
+    `select id, ((nullif(lower(btrim(email)),'') <> $2) or
+       (nullif(btrim(phone),'') is not null and $3 <> '' and
+        coalesce(crm_phone_key(phone,source),btrim(phone)) <> coalesce(crm_phone_key($3,'email'),$3))) is true as incompatible
+       from contacts where tenant_id=$1 and (lower(btrim(email))=$2 or phone=nullif($3,'') or
+         crm_phone_key(phone,source)=crm_phone_key($3,'email')) order by id limit 2 for update`,
+    [tenantId, email, input.phone]);
+  const locked = await query<{ contact_id: string | null }>(
+    "select contact_id from mail_senders where tenant_id=$1 and id=$2 for update", [tenantId, senderId]);
+  if (!locked.rows[0]) throw Object.assign(new Error("Remetente não encontrado."), { statusCode: 404 });
+  if (locked.rows[0].contact_id) return { contactId: locked.rows[0].contact_id, email, linked: false };
+  if (matches.rows.length > 1 || matches.rows[0]?.incompatible) {
+    conflict("O e-mail e o telefone não identificam uma única ficha compatível. Revise os contatos e tente novamente.");
+  }
+  let contactId = matches.rows[0]?.id;
+  if (contactId) {
+    await query(`update contacts set email=coalesce(nullif(btrim(email),''),$3), name=$4,
+        company=coalesce(nullif(company,''),nullif($5,'')), phone=coalesce(nullif(phone,''),nullif($6,'')),
+        tags=array(select distinct unnest(tags || $7::text[])), updated_at=now()
+      where tenant_id=$1 and id=$2`, [tenantId, contactId, email, input.name, input.company, input.phone, input.tags]);
+  } else {
+    const created = await query<{ id: string }>(
+      `insert into contacts (tenant_id,name,email,company,phone,source,tags)
+       values ($1,$2,$3,nullif($4,''),nullif($5,''),'email',$6) returning id`,
+      [tenantId, input.name, email, input.company, input.phone, input.tags]);
+    contactId = created.rows[0].id;
+  }
+  await query("update mail_senders set status='registered',contact_id=$3 where tenant_id=$1 and id=$2",
+    [tenantId, senderId, contactId]);
+  return { contactId, email, linked: true };
+}
+
 /** Called inside the same transaction as the audit event. */
 export async function mergeContact(tenantId: string, targetId: string, sourceId: string) {
   if (targetId === sourceId) conflict("Escolha duas fichas diferentes.");

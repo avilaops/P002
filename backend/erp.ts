@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { query, transaction } from "./db.js";
+import { lockContactIdentity } from "./contact-identity.js";
 
 /**
  * PONTE COM O ERP — crm.avilaops.com ↔ erp.avilaops.com
@@ -362,11 +363,7 @@ export async function processStoredErpEvent(connection: ErpConnection, id: strin
       if (typeof customer === "string") {
         await query("select pg_advisory_xact_lock(hashtextextended($1,0))", [`erp-customer:${tenant}:${customer}`]);
         const data = row.payload.data ?? {};
-        await query(`select pg_advisory_xact_lock(hashtextextended($1 || ':' || identity_key,0))
-          from (select distinct identity_key from unnest(array[
-            crm_document_key($2),crm_phone_key($3,'erp'),nullif(lower(btrim($4)),'')
-          ]) identity_key where identity_key is not null order by identity_key) identities`,
-          [tenant,data.cpfCnpj ?? null,data.phone ?? null,data.email ?? null]);
+        await lockContactIdentity(tenant, "erp", data.cpfCnpj, data.phone, data.email);
       }
       const result = await handleErpEvent(connection,row.payload,async (...args) => {
         // An older release could commit the audit event before marking its envelope processed.
