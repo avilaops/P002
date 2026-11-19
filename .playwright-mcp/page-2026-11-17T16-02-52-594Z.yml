@@ -1,0 +1,53 @@
+- generic [active] [ref=f1e1]:
+  - main [ref=f1e2]:
+    - navigation [ref=f1e3]:
+      - link "Avila CRM, início" [ref=f1e4] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f1e6]:
+          - generic [ref=f1e7]: AVILA CRM
+          - generic [ref=f1e8]: AVILA OPS
+      - generic [ref=f1e9]:
+        - link "Documentação" [ref=f1e10] [cursor=pointer]:
+          - /url: /docs/
+        - link "Produto" [ref=f1e11] [cursor=pointer]:
+          - /url: /#produto
+    - generic [ref=f1e12]:
+      - generic [ref=f1e13]:
+        - generic [ref=f1e14]:
+          - paragraph [ref=f1e15]: OPERAÇÃO MAIS CLARA
+          - heading "Relacionamentos bem cuidados viram crescimento." [level=1] [ref=f1e16]
+          - paragraph [ref=f1e17]: O CRM da Avila Ops para sua equipe acompanhar conversas, oportunidades e clientes com contexto, ritmo e responsabilidade.
+          - paragraph [ref=f1e18]: Conectando ao acesso Avila Ops…
+          - generic [ref=f1e19]: Sessão protegida pela conta Avila Ops
+        - generic [ref=f1e21]:
+          - generic [ref=f1e22]:
+            - generic [ref=f1e23]:
+              - paragraph [ref=f1e24]: VISÃO DA OPERAÇÃO
+              - paragraph [ref=f1e25]: Hoje, sem ruído
+            - generic [ref=f1e26]: Ativo
+          - generic [ref=f1e27]:
+            - paragraph [ref=f1e30]: 12 conversas aguardando
+            - paragraph [ref=f1e33]: 8 oportunidades em avanço
+            - paragraph [ref=f1e36]: 24 contatos acompanhados
+            - paragraph [ref=f1e39]: 3 tarefas para hoje
+          - paragraph [ref=f1e40]: Cada pessoa sabe o que precisa acontecer a seguir.
+      - generic [ref=f1e41]:
+        - article [ref=f1e42]:
+          - heading "Conversas em um só lugar" [level=2] [ref=f1e47]
+          - paragraph [ref=f1e48]: Organize atendimento, histórico e próximos passos sem alternar entre ferramentas.
+        - article [ref=f1e49]:
+          - heading "Relacionamentos que continuam" [level=2] [ref=f1e55]
+          - paragraph [ref=f1e56]: Tenha contexto de pessoas, empresas e oportunidades em cada contato.
+        - article [ref=f1e57]:
+          - heading "Automação com supervisão" [level=2] [ref=f1e62]
+          - paragraph [ref=f1e63]: Use IA para acelerar o trabalho, mantendo a decisão nas mãos da equipe.
+    - generic [ref=f1e64]:
+      - generic [ref=f1e65]: Avila CRM · Avila Ops
+      - generic [ref=f1e66]:
+        - link "Documentação" [ref=f1e67] [cursor=pointer]:
+          - /url: /docs/
+        - link "Privacidade" [ref=f1e68] [cursor=pointer]:
+          - /url: /privacidade/
+        - link "Termos" [ref=f1e69] [cursor=pointer]:
+          - /url: /termos/
+  - alert [ref=f1e70]

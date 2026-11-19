@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import { extname, join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { query } from "./db.js";
+import { query, transaction } from "./db.js";
+import { registerMailSender } from "./contact-identity.js";
 import { registerMailReplyRoutes } from "./mail-reply.js";
 import { enviadosHoje, readSettings, saveSettings } from "./automation.js";
 import {
@@ -256,42 +257,11 @@ export function registerMailRoutes(app: FastifyInstance, deps: Dependencies) {
       })
       .parse(request.body);
 
-    const sender = await query<{ email: string }>("select email from mail_senders where tenant_id = $1 and id = $2", [user.tenant_id, id]);
-    const email = sender.rows[0]?.email;
-    if (!email) return reply.code(404).send({ error: "Remetente não encontrado." });
-
-    const existing = await query<{ id: string }>("select id from contacts where tenant_id = $1 and lower(email) = $2 limit 1", [
-      user.tenant_id,
-      email,
-    ]);
-
-    let contactId = existing.rows[0]?.id;
-    if (contactId) {
-      await query(
-        `update contacts
-            set name = $3, company = nullif($4, ''), phone = coalesce(nullif($5, ''), phone),
-                tags = (select array(select distinct unnest(tags || $6::text[]))), updated_at = now()
-          where tenant_id = $1 and id = $2`,
-        [user.tenant_id, contactId, input.name, input.company, input.phone, input.tags],
-      );
-    } else {
-      const created = await query<{ id: string }>(
-        `insert into contacts (tenant_id, name, email, phone, company, source, tags)
-         values ($1, $2, $3, nullif($4, ''), nullif($5, ''), 'email', $6)
-         returning id`,
-        [user.tenant_id, input.name, email, input.phone, input.company, input.tags],
-      );
-      contactId = created.rows[0].id;
-    }
-
-    await query("update mail_senders set status = 'registered', contact_id = $3 where tenant_id = $1 and id = $2", [
-      user.tenant_id,
-      id,
-      contactId,
-    ]);
-    await recordEvent(user.tenant_id, "contact", "mail.sender_registered", { email }, user.id, contactId, null);
-
-    return { ok: true, contactId };
+    return transaction(async () => {
+      const { contactId, email, linked } = await registerMailSender(user.tenant_id, id, input);
+      if (linked) await recordEvent(user.tenant_id, "contact", "mail.sender_registered", { email }, user.id, contactId, request.id);
+      return { ok: true, contactId };
+    });
   });
 
   app.post("/api/mail/senders/:id/ignore", async (request, reply) => {
